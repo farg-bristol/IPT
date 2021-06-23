@@ -33,7 +33,7 @@ int LessThanREError(matrix<real,4> const& A)
     a2 = fabs(A(1,2)-A(3,2))*(fabs((A(2,0)-A(3,0))*(A(0,1)-A(3,1)))+fabs((A(2,1)-A(3,1))*(A(0,0)-A(3,0))));
     a3 = fabs(A(2,2)-A(3,2))*(fabs((A(0,0)-A(3,0))*(A(1,1)-A(3,1)))+fabs((A(0,1)-A(3,1))*(A(1,0)-A(3,0))));
 
-    if(fabs(A.det()) <=  MERROR*(a1+a2+a3))
+    if(fabs(A.determinant()) <=  MERROR*(a1+a2+a3))
     {
         #pragma omp critical
         {
@@ -46,7 +46,7 @@ int LessThanREError(matrix<real,4> const& A)
         cout << setw(13) << A(3,0) << setw(13) << A(3,1) << setw(13) << A(3,2) << setw(13) << A(3,3) << endl;
         // cout << "MERROR: " << MERROR << endl;
         // cout << "Components: " << a1 << "  " << a2 << "  " << a3 << endl;
-        cout << A.det() <<  " <= " <<  MERROR*(a1+a2+a3) << endl;
+        cout << A.determinant() <<  " <= " <<  MERROR*(a1+a2+a3) << endl;
         }
         return TRUE;
     }
@@ -78,7 +78,7 @@ bool get_line_intersection(vector<vec<real,2>> const& verts, vector<size_t> cons
     t = ( r[0] * (p1[1] - e1[1]) - r[1] * (p1[0] - e1[0])) / denom;
 
     if (u > 0 && u < 1 && t > 0 && t < 1)
-    {   // Collision detected
+    {   // Collision determinantected
         return 1;
     }
 
@@ -162,7 +162,7 @@ int Crossings3D(vector<vec<real,3>> const& verts, vector<size_t> const& face,
         return 0;  
     }
     
-    flag1 = (vol1.det() < 0.0);
+    flag1 = (vol1.determinant() < 0.0);
 
     vol1.row(0,vec<real,4>(rayp[0], rayp[1], rayp[2],1.0));
 
@@ -173,7 +173,7 @@ int Crossings3D(vector<vec<real,3>> const& verts, vector<size_t> const& face,
         return 0;  
     }
 
-    flag2 = (vol1.det() < 0.0); 
+    flag2 = (vol1.determinant() < 0.0); 
 
     /*If signs of the volumes alternate, then the points lie either side of the plane*/
     /*Now check if the line drawn by the two points intersects inside the bounds of the triangle plane*/
@@ -199,7 +199,7 @@ int Crossings3D(vector<vec<real,3>> const& verts, vector<size_t> const& face,
             return 0; 
         }
         
-        flag3 = (vol.det() < 0.0);
+        flag3 = (vol.determinant() < 0.0);
 
         /*Check for each face, if the signs of all the tets are the same.*/
         for (size_t ii = 1; ii < face.size(); ++ii)
@@ -217,7 +217,7 @@ int Crossings3D(vector<vec<real,3>> const& verts, vector<size_t> const& face,
                 return 0; 
             }
         
-            flag4 = (vol.det() < 0.0);
+            flag4 = (vol.determinant() < 0.0);
 
             /*If the sign of the tet is different, this face isn't intersected.*/
             if (flag4 != flag3)
@@ -264,11 +264,11 @@ int Crossings3D_P(vector<vec<real,3>> const& verts, vector<size_t> const& face,
         return 0;  
     }
     
-    flag1 = (vol1.det() < 0.0);
+    flag1 = (vol1.determinant() < 0.0);
 
     vol1.row(0,vec<real,4>(rayp,1.0));
 
-    flag2 = (vol1.det() < 0.0); 
+    flag2 = (vol1.determinant() < 0.0); 
 
     /*If signs of the volumes alternate, then the points lie either side of the plane*/
     /*Now check if the line drawn by the two points intersects inside the bounds of the triangle plane*/
@@ -289,7 +289,7 @@ int Crossings3D_P(vector<vec<real,3>> const& verts, vector<size_t> const& face,
             return 0; 
         }
 
-        flag3 = (vol.det() < 0.0);
+        flag3 = (vol.determinant() < 0.0);
 
         /* Edge 1 */
         vol.row(1, vec<real,4>(v1, 1.0));
@@ -301,7 +301,7 @@ int Crossings3D_P(vector<vec<real,3>> const& verts, vector<size_t> const& face,
             return 0; 
         }
     
-        flag4 = (vol.det() < 0.0);
+        flag4 = (vol.determinant() < 0.0);
         if (flag4 != flag3)
             return 0;   
 
@@ -315,7 +315,7 @@ int Crossings3D_P(vector<vec<real,3>> const& verts, vector<size_t> const& face,
             return 0; 
         }
     
-        flag4 = (vol.det() < 0.0);
+        flag4 = (vol.determinant() < 0.0);
         if (flag4 != flag3)
             return 0;   
          
@@ -389,7 +389,7 @@ void FindCell(SETT const& svar, Vec_Tree const& TREE, MESH const& cells, part& p
             #ifdef DEBUG
             // cout << "Moved to a neighbour cell." << endl;
             #endif
-
+            pi.faceID = -1; /* We're inside a cell */
             pi.cellID = cell;
             pi.cellV = cells.cVel[cell];
             pi.cellRho = cells.cRho[cell];
@@ -438,7 +438,7 @@ void FindCell(SETT const& svar, Vec_Tree const& TREE, MESH const& cells, part& p
                 #ifdef DEBUG
                     // cout << "Moved to a neighbour cell." << endl;
                 #endif
-
+                pi.faceID = -1; /* We're inside a cell */
                 pi.cellID = cell;
                 pi.cellV = cells.cVel[cell];
                 pi.cellRho = cells.cRho[cell];
@@ -457,6 +457,7 @@ void FindCell(SETT const& svar, Vec_Tree const& TREE, MESH const& cells, part& p
                 {
                     inside_flag = 1;
                     pi.nNotFound = 0;
+                    pi.faceID = -1; /* We're inside a cell */
                     pi.cellID = cell;
                     pi.cellV = cells.cVel[cell];
                     pi.cellRho = cells.cRho[cell];
@@ -492,29 +493,26 @@ void FindCell(SETT const& svar, Vec_Tree const& TREE, MESH const& cells, part& p
                         ints = Crossings3D(cells.verts,face,testp,rayp,perturb);
                         if(perturb == TRUE)
                         {
-                            testp = pi.xi + vec<real,3>(PERTURB(0,1),PERTURB(0,2),PERTURB(0,3));
-                            ints = Crossings3D(cells.verts,face,testp,rayp,perturb);
+                            ints = Crossings3D_P(cells.verts,face,testp,rayp,perturb);
                         }
                         
                         if(ints)
                         {
-                            cross=!cross;
+                            cross=1;
                             if(cells.leftright[findex].second == -1)
                             {
-                                cout << "Particle has crossed an wall boundary!" << endl;
-                                pi.going = 0;
+                                // cout << "Particle " << pi.partID << " has crossed a boundary!" << endl;
+                                /* Use the faceID (Not used otherwise) to identify if particle is outside the cell */
+                                pi.faceID = -2;
+                                goto matchfound;
                             }
-                            else if(cells.leftright[findex].second == -2)
-                            {
-                                cout << "Particle has crossed a farfield boundary!" << endl;
-                                pi.going = 0; 
-                                // localDel.emplace_back(ii);         
-                            }
+                            
                         }  
                     }
                 }
-            }
 
+            }
+            matchfound:	
             if(cross == 0)
             {
                 if(pi.nNotFound > 10)
@@ -531,14 +529,13 @@ void FindCell(SETT const& svar, Vec_Tree const& TREE, MESH const& cells, part& p
                     cout << "Count: " << pi.nNotFound << endl;
                     pi.nNotFound++;
                 }
-                
-
             }
+
         }
     }
+
        
 }
-
 
 
 /********************** IMPLICIT TRACKING FUNCTIONS **************************/
@@ -557,6 +554,50 @@ int Cross_Plane(vector<vec<real,3>> const& verts, vector<size_t> const& face,
             verts[face[0]][0], verts[face[0]][1], verts[face[0]][2], 1.0,
             verts[face[1]][0], verts[face[1]][1], verts[face[1]][2], 1.0,
             verts[face[2]][0], verts[face[2]][1], verts[face[2]][2], 1.0);
+     
+
+    if(LessThanREError(vol1))
+    {   // Perturb the test point so that it doesn't go into roundoff error  
+        perturb = TRUE;
+        return 0;  
+    }
+    
+    flag1 = (vol1.determinant() < 0.0);
+
+    vol1.row(0,vec<real,4>(rayp[0], rayp[1], rayp[2],1.0));
+
+    // ray point is very far so I don't see this falling into roundoff error 
+    if(LessThanREError(vol1))
+    {     
+        perturb = TRUE;
+        return 0;  
+    }
+
+    flag2 = (vol1.determinant() < 0.0); 
+
+    /* If signs of the volumes alternate, */
+    /* then the ray intersects the infinite plane*/
+    if(flag1 != flag2)
+    {   
+        return 1;
+    }  
+    return 0;    
+}
+
+
+/* Check for intersection with the infinite plane (I.e. just do two volumes) */
+int Cross_Plane_P(vector<vec<real,3>> const& verts, vector<size_t> const& face, 
+    vec<real,3> const& point, vec<real,3> const& point2, bool& perturb)
+{   /*Using Signed volumes of tetrahedra*/
+    /*Shewchuk J.R 1996 */
+    vec<real,3> const testp = point; 
+    vec<real,3> const rayp = point2;
+    matrix<real,4> vol1;
+    int flag1, flag2;
+    vol1  = matrix<real,4>(testp[0], testp[1], testp[2] , 1.0,
+            verts[face[0]][0] + PERTURB(0,0), verts[face[0]][1] + PERTURB(0,1), verts[face[0]][2] + PERTURB(0,2), 1.0,
+            verts[face[1]][0] + PERTURB(1,0), verts[face[1]][1] + PERTURB(1,1), verts[face[1]][2] + PERTURB(1,2), 1.0,
+            verts[face[2]][0] + PERTURB(2,0), verts[face[2]][1] + PERTURB(2,1), verts[face[2]][2] + PERTURB(2,2), 1.0);
      
 
     if(LessThanREError(vol1))
@@ -609,7 +650,7 @@ vector<lint> CheckCellFace(size_t const& cell, MESH const& cells, size_t const& 
         if(perturb)
         {
             perturb = FALSE;
-            if(Crossings3D_P(cells.verts,face,testp,rayp,perturb))
+            if(Cross_Plane_P(cells.verts,face,testp,rayp,perturb))
             {
                 intersects.emplace_back(static_cast<lint>(cFace));
             }
@@ -704,14 +745,13 @@ void RayNormalIntersection(MESH const& cells, vec<real,3> const& rayOrigin, vec<
     /* Find the most distant point from the current point */
     for(size_t ii = 0; ii < face.size(); ii++)
     {
-        if( (cells.verts[face[ii]] - rayOrigin).sqnorm() > temp_p.sqnorm())
+        if( (cells.verts[face[ii]] - rayOrigin).squaredNorm() > temp_p.squaredNorm())
             temp_p = (cells.verts[face[ii]] - rayOrigin);
     }
 
     /* Find numerator */
     denom = rayVector.dot(norm);
-    dt = temp_p.dot(norm)/denom;
-    
+    dt = temp_p.dot(norm)/denom; 
 }
 
 
@@ -778,7 +818,7 @@ void FindFace(SETT const& svar, MESH const& cells, part const& pn, part& pnp1)
         {
             /* face normal product with the velocity vector is positive */
             /* so it isn't behind the particle */
-            /* Create a list of the intersection distances that are non negative */
+            
             if ( dt < mindist)
             {
                 nextface = intersects[ii];
@@ -792,8 +832,8 @@ void FindFace(SETT const& svar, MESH const& cells, part const& pn, part& pnp1)
                     /* Calculation has resulted in a roundoff suggesting a */
                     /* negative intersection distance, so set distance to zero */
                     /* so particle containment is updated, but not position */
-                    cout << "distance is 0" << endl;
-                    mindist = 0;
+                    // cout << "distance is near 0" << endl;
+                    mindist = MEPSILON;
                 }
             }
 

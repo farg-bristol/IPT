@@ -25,6 +25,8 @@
 typedef vec<real,SIMDIM> StateVecD;
 typedef vec<int,SIMDIM> StateVecI;
 
+const std::string WHITESPACE = " \n\r\t\f\v";
+
 typedef struct CELL
 {
 
@@ -49,7 +51,7 @@ typedef struct CELL
 	/*Surface faces*/
 	size_t nSurf, nSurfQ, nSurfT;
 	vector<vector<size_t>> stfaces, sqfaces;
-	vector<size_t> smarkers;
+	vector<int> smarkers;
 }CELL;
 
 typedef struct FACE
@@ -82,6 +84,15 @@ typedef struct FACE
 		quad_faces.insert(quad_faces.end(),flocal.quad_faces.begin(),flocal.quad_faces.end());
 		qcelllr.insert(qcelllr.end(),flocal.qcelllr.begin(),flocal.qcelllr.end());
 		tcelllr.insert(tcelllr.end(),flocal.tcelllr.begin(),flocal.tcelllr.end());
+		
+		surf_trigs.insert(surf_trigs.end(),flocal.surf_trigs.begin(),flocal.surf_trigs.end());
+		surf_quads.insert(surf_quads.end(),flocal.surf_quads.begin(),flocal.surf_quads.end());
+		strigslr.insert(strigslr.end(),flocal.strigslr.begin(),flocal.strigslr.end());
+		squadslr.insert(squadslr.end(),flocal.squadslr.begin(),flocal.squadslr.end());
+
+		tsmarkers.insert(tsmarkers.end(),flocal.tsmarkers.begin(),flocal.tsmarkers.end());
+		qsmarkers.insert(qsmarkers.end(),flocal.qsmarkers.begin(),flocal.qsmarkers.end());
+
 		nFaces += flocal.nFaces;
 		ntFaces += flocal.ntFaces;
 		nqFaces += flocal.nqFaces;
@@ -96,11 +107,41 @@ typedef struct FACE
 	vector<std::pair<int,int>> qcelllr, tcelllr; /*Cell left and right of the face*/
 
 
-	vector<size_t> tsmarkers, qsmarkers;
+	/* Surface data */
+	vector<vector<size_t>> surf_trigs, surf_quads;
+	vector<std::pair<int,int>> strigslr, squadslr;
+	vector<int> tsmarkers, qsmarkers;
+
 
 	const size_t nElem, nPnts;
 }FACE;
 
+std::string ltrim(const std::string &s)
+{
+    size_t start = s.find_first_not_of(WHITESPACE);
+    return (start == std::string::npos) ? "" : s.substr(start);
+}
+ 
+std::string rtrim(const std::string &s)
+{
+    size_t end = s.find_last_not_of(WHITESPACE);
+    return (end == std::string::npos) ? "" : s.substr(0, end + 1);
+}
+
+string Get_Parameter_Value(string const& line)
+{
+    size_t pos = line.find(":");
+    size_t end = line.find("#",pos+1); /* Check if a comment exists on the line */
+
+    if (end != string::npos)
+    {
+        string value = line.substr(pos + 1, (end-pos+2) );
+        return ltrim(rtrim(value));
+    }
+
+    string value = line.substr(pos + 1);
+    return ltrim(rtrim(value));
+}
 
 vector<int> Find_Bmap_Markers(string const& bmapIn)
 {
@@ -117,75 +158,37 @@ vector<int> Find_Bmap_Markers(string const& bmapIn)
 		exit(-1);
 	}
 
-	vector<int> markers;
-	/*Search for the markers that have either farfield or symmetry plane*/
-	size_t lineno = 0;
+	/* Find out how many blocks, i.e. how many boundaries to expect. */
+	uint nBlocks = 0;
 	string line;
+	while (getline(fin, line))
+	{
+		if (line.find("block end") != string::npos)
+		{ /*We're on a new block*/
+			nBlocks++;
+		}
+	}
+	fin.seekg(0,fin.beg);
+
+	vector<int> markers(nBlocks);
 
 	size_t blockno = 0;
-	size_t blockstart = 1; /*A store of when this block starts to search through*/
 
 	while(getline(fin,line))
 	{
 
-		// cout << line << endl;
-		if(line.find("Type: laminar wall")!=string::npos ||
-			line.find("Type: euler wall")!=string::npos || 
-			line.find("Type: viscous wall")!=string::npos ||
-			line.find("Type: sharp edge")!=string::npos)
+		if (line.find("Markers") != string::npos)
 		{
-			
-			/*This marker is a far field, so store it.*/
-			/*Go to the start of the block, and search for the marker ID*/
-			GotoLine(fin,blockstart);
-			while(getline(fin,line))
-			{	
-				// cout << "inner:\t" << line << endl;
-				if(line.find("Markers:")!=string::npos)
-				{
-					// cout << "Found a boundary marker" << endl;
-					std::stringstream sstr;
-
-					sstr << line;
-
-					string temp;
-					int found;
-
-					while(!sstr.eof())
-					{
-						sstr >> temp;
-						if(std::stringstream(temp) >> found)
-						{
-							markers.emplace_back(found);
-						}
-
-						temp = "";
-					}
-
-					/*Go back to where we were*/
-					blockstart = lineno+2;
-					GotoLine(fin,lineno+2);
-					break;
-				}
-			}
+			string value = Get_Parameter_Value(line);
+			std::istringstream sstr(value);
+			sstr >> markers[blockno];
 		}
 
 		if(line.find("block end")!= string::npos)
 		{	/*We're on a new block*/
 			blockno++;
-			blockstart = lineno+1;
 		}
-
-		lineno++;
 	}
-
-	cout << "Wall markers:" << endl;
-
-	for(auto mark:markers)
-	{
-		cout << mark << "  " ;
-	}
-	cout << endl;
 
 	#ifdef DEBUG
 	dbout << "Exiting Find_Bmap_Markers..." << endl;
@@ -265,7 +268,7 @@ void Get_Surface(int& fin, CELL& cdata)
 
 	faceMarkers = Get_Int_Scalar(fin, "boundarymarker_of_surfaces", nMarkers);
 
-	cdata.smarkers = vector<size_t>(nMarkers);
+	cdata.smarkers = vector<int>(nMarkers);
 	for(size_t ii = 0; ii < nMarkers; ++ii)
 	{
 		cdata.smarkers[ii] = faceMarkers[ii];
@@ -292,7 +295,6 @@ void Get_Surface(int& fin, CELL& cdata)
 	// return farVec;
 }
 
-
 void Add_Face(vector<size_t> const& face, std::pair<int,int> const& leftright,
 	FACE& fdata)
 {
@@ -315,6 +317,34 @@ void Add_Face(vector<size_t> const& face, std::pair<int,int> const& leftright,
 	{	/*Face is already a triangle. No work to be done*/
 		fdata.tcelllr.emplace_back(leftright);
 		fdata.trig_faces.emplace_back(face);
+		fdata.ntFaces++;
+	}
+
+	fdata.nFaces++;
+}
+
+void Add_Surface_Face(vector<size_t> const& face, std::pair<int,int> const& leftright,
+	FACE& fdata)
+{
+	/*Break the face down into two triangles*/
+	if(face.size() == 4)
+	{	/*Break the face down into two triangles*/
+		// 	fdata.celllr.emplace_back(leftright);
+		// 	fdata.celllr.emplace_back(leftright);
+		// 	vector<size_t> face1 = {face[0],face[1],face[2]};
+		// 	vector<size_t> face2 = {face[0],face[2],face[3]};
+		// 	fdata.faces.emplace_back(face1);
+		// 	fdata.faces.emplace_back(face2);
+		// 	fdata.numFaces+=2;
+	
+		fdata.squadslr.emplace_back(leftright);
+		fdata.surf_quads.emplace_back(face);
+		fdata.nqFaces++;
+	}
+	else
+	{	/*Face is already a triangle. No work to be done*/
+		fdata.strigslr.emplace_back(leftright);
+		fdata.surf_trigs.emplace_back(face);
 		fdata.ntFaces++;
 	}
 
@@ -427,7 +457,7 @@ void CheckFaces(const vector<vector<size_t>>& vertincells,
 						leftright = std::pair<int,int>(lindex,-1);
 						fdata.tsmarkers.emplace_back(cdata.smarkers[ii]);
 						colour[lindex][lfaceindex] = 1;
-						Add_Face(face,leftright,fdata);
+						Add_Surface_Face(face,leftright,fdata);
 						fdata.nSurf++;
 						goto matchfound;
 					}
@@ -445,7 +475,7 @@ void CheckFaces(const vector<vector<size_t>>& vertincells,
 						leftright = std::pair<int,int>(lindex,-1);
 						fdata.qsmarkers.emplace_back(cdata.smarkers[ii+cdata.nSurfT]);
 						colour[lindex][lfaceindex] = 1;
-						Add_Face(face,leftright,fdata);
+						Add_Surface_Face(face,leftright,fdata);
 						fdata.nSurf++;
 						goto matchfound;
 					}
@@ -633,6 +663,12 @@ void BuildFaces(const CELL& cdata, FACE& fdata)
 
 	if(unmfaces != 0)
 	cout << "There are " << unmfaces << " unmatched faces." << endl;
+
+	/* Put the surface faces into the main structures */
+	fdata.trig_faces.insert(fdata.trig_faces.end(),fdata.surf_trigs.begin(),fdata.surf_trigs.end());
+	fdata.quad_faces.insert(fdata.quad_faces.end(),fdata.surf_quads.begin(),fdata.surf_quads.end());
+	fdata.tcelllr.insert(fdata.tcelllr.end(),fdata.strigslr.begin(),fdata.strigslr.end());
+	fdata.qcelllr.insert(fdata.qcelllr.end(),fdata.squadslr.begin(),fdata.squadslr.end());
 
 	if (fdata.trig_faces.size() != fdata.ntFaces)
 	{

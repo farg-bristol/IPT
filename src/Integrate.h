@@ -4,6 +4,84 @@
 #include "Var.h"
 #include "Containment.h"
 
+void Terminate_Particle(SETT const& svar, MESH const& cells, vector<State> const& time_record,
+    part& pnp1, vector<vector<SURF>>& surface_faces, vector<SURF>& surface_data )
+{
+    pnp1.going = 0;
+
+    // cout << "Particle " << pnp1.partID << " stopped iterating"; 
+    if(pnp1.cellID < 0)
+    {
+        /* Find which surface it has impacted  */
+        size_t const& face = pnp1.faceID;
+
+        auto const index = std::find_if(cells.smarkers.begin(), cells.smarkers.end(), 
+        [face](std::pair<size_t,int> const& p1){return p1.first == face;});
+
+        if(index != cells.smarkers.end())
+        {
+            /* Find which surface to add to, and which face of that*/
+            auto const surface = std::find(svar.markers.begin(), svar.markers.end(), index->second);
+
+            if(surface != svar.markers.end())
+            {
+                size_t const surf = surface - svar.markers.begin();
+
+                // cout << " after hitting surface: " << svar.bnames[surf] << endl;
+                surface_data[surf].count++;
+                surface_data[surf].pIDs.emplace_back(pnp1.partID);
+                surface_data[surf].end_pos.emplace_back(pnp1.xi);
+                surface_data[surf].start_pos.emplace_back(time_record[0][pnp1.partID].xi);
+
+                auto const index2 =
+                    std::find_if(surface_faces[surf].begin(), surface_faces[surf].end(), 
+                    [face](SURF const& p){return p.faceID == face;});
+
+                if(index2 != surface_faces[surf].end())
+                {
+                    size_t fIndex = index2 - surface_faces[surf].begin();
+                    surface_faces[surf][fIndex].count++;
+                    surface_faces[surf][fIndex].pIDs.emplace_back(pnp1.partID);
+                    surface_faces[surf][fIndex].end_pos.emplace_back(pnp1.xi);
+                    surface_faces[surf][fIndex].start_pos.emplace_back(time_record[0][pnp1.partID].xi);
+                }
+                else
+                {
+                    cout << "Couldn't find which face of the surface the particle impacted" << endl;
+                }
+            }
+            else
+            {
+                cout << "Couldn't find which surface index for the marker." << endl;
+            }
+            
+        }
+        else
+        {
+            cout << "Couldn't find which surface the particle impacted" << endl;
+        }
+
+        
+    }
+    else
+    {
+        // cout << " prematurely" << endl;
+    }
+    
+    
+
+    if(svar.streakout == 1)
+    {
+        Write_ASCII_Streaks(svar,time_record,pnp1, pnp1.partID);
+    }
+
+    if(svar.cellsout == 1)
+    {
+        Write_ASCII_Cells(svar,cells,time_record, pnp1.partID);
+    }
+}
+
+
 real GetCd(real const& Re)
 {
 	return (1.0+0.197*pow(Re,0.63)+2.6e-04*pow(Re,1.38))*(24.0/(Re+0.0000001));
@@ -26,10 +104,11 @@ vec<real,3> Explicit_AeroForce(vec<real,3> const& Vdiff, FLUID const& fvar, part
 void Explicit_Newmark_Beta(FLUID const& fvar, real const& a, real const& b, real const& c, real const& d, 
                   real const& dt, real const& dt2, part const& pn, part& pnp1)
 {
-    vec<real,3> Vdiff = pnp1.cellV - pnp1.v ;
-
+    vec<real,3> const Vdiff = pnp1.cellV - pnp1.v ;
+    vec<real,3> const g(0,0,-9.81);
     vec<real,3> res = Explicit_AeroForce(Vdiff,fvar,pnp1);
     res /= pnp1.mass;
+    res += g;
     // cout << res[0] << "  " << res[1] << "  " << res[2] << endl;
 
     pnp1.xi = pn.xi+dt*pn.v+dt2*(c*pn.acc+d*res);
@@ -38,7 +117,8 @@ void Explicit_Newmark_Beta(FLUID const& fvar, real const& a, real const& b, real
 }
 
 
-int Explicit_Integrate(SETT& svar, FLUID const& fvar, Vec_Tree const& TREE, MESH const& cells, State& pn, State& pnp1)
+void Explicit_Integrate(SETT& svar, FLUID const& fvar, Vec_Tree const& TREE, MESH const& cells, State& pn, State& pnp1,
+                        vector<State>& time_record, vector<vector<SURF>>& surface_faces, vector<SURF>& marker_data)
 {
     real const& dt = svar.dt;
     real const& dt2 = dt*dt;
@@ -49,56 +129,103 @@ int Explicit_Integrate(SETT& svar, FLUID const& fvar, Vec_Tree const& TREE, MESH
 	const real c = 0.5*(1-2*svar.beta);
 	const real d = svar.beta;
 
-    uint nGoing = 0;
+    uint nGoing = pnp1.size();
 
-    for (size_t step = 0; step < svar.nsteps; ++step)
+    while(nGoing != 0)
     {
-        nGoing = 0; /* Number of particle still integrating */
-        /* Integrate each particle */
+
+        for (size_t step = 0; step < svar.nsteps; ++step)
+        {
+            nGoing = 0; /* Number of particle still integrating */
+            /* Integrate each particle */
+            for(size_t ii = 0; ii < pnp1.size(); ++ii)
+            {
+                if(pnp1[ii].going == 1)
+                {
+                    /* Check containing cell */
+                    FindCell(svar,TREE, cells, pnp1[ii]);
+
+                    /* Perform one step of NB, then freeze containment for stability. */
+                    Explicit_Newmark_Beta(fvar, a,b,c,d,dt,dt2,pn[ii],pnp1[ii]);
+                    FindCell(svar,TREE, cells, pnp1[ii]);
+
+                    int iter = 0;
+                    int min_iter = 3;
+                    real error = 1.0;
+                    while(error > -7.0 && iter < min_iter)
+                    {
+                        vec<real,3> temp = pnp1[ii].xi;
+                        /* Get the aerodynamic force */
+                        Explicit_Newmark_Beta(fvar, a,b,c,d,dt,dt2, pn[ii],pnp1[ii]);
+
+                        error = log10((pnp1[ii].xi-temp).norm());
+
+                        if(iter < svar.max_iter)
+                            iter++;
+                        else
+                            break;
+                    }
+
+                    if(pnp1[ii].going == 0)
+                    {
+                        /* Use face ID to test if it's crossed a boundary */
+                        if(pnp1[ii].faceID == -2 )
+                        {
+                            Terminate_Particle(svar,cells,time_record,pnp1[ii],surface_faces,marker_data);
+                            svar.nSuccess++;
+                        }
+                        else
+                        {
+                            svar.nFailed++;
+                        }
+
+                    }
+                    
+                    /* Move forward in time */
+                    pn[ii] = pnp1[ii];
+                    nGoing += pnp1[ii].going;
+                }
+                
+            }
+            if(nGoing == 0)
+            {
+                cout << "All particles finished simulating" << endl;
+                break;
+            }
+
+            t += dt;
+        }
+
         for(size_t ii = 0; ii < pnp1.size(); ++ii)
         {
             if(pnp1[ii].going == 1)
             {
-                /* Check containing cell */
-                FindCell(svar,TREE, cells, pnp1[ii]);
+                if(svar.partout == 1)
+                    Write_ASCII_Point(svar.partfiles[ii], svar.scale, pnp1[ii], ii);
+            }
+        }
 
-                /* Perform one step of NB, then freeze containment for stability. */
-                Explicit_Newmark_Beta(fvar, a,b,c,d,dt,dt2,pn[ii],pnp1[ii]);
-                FindCell(svar,TREE, cells, pnp1[ii]);
+        if(svar.frame < svar.max_frame)
+            svar.frame++;
+        else
+        {
+            /* Wrap up the simulation */
+            cout << "Reached the maximum number of frames. Ending..." << endl;
 
-                int iter = 0;
-                int min_iter = 3;
-                real error = 1.0;
-                while(error > -7.0 && iter < min_iter)
+            for(size_t ii = 0; ii < pnp1.size(); ++ii)
+            {
+                if(pnp1[ii].going == 1)
                 {
-                    vec<real,3> temp = pnp1[ii].xi;
-                    /* Get the aerodynamic force */
-                    Explicit_Newmark_Beta(fvar, a,b,c,d,dt,dt2, pn[ii],pnp1[ii]);
-
-                    error = log10((pnp1[ii].xi-temp).norm());
-
-                    if(iter < svar.max_iter)
-                        iter++;
-                    else
-                        break;
+                    Terminate_Particle(svar,cells,time_record,pnp1[ii],surface_faces,marker_data);
+                    svar.nSuccess++;
                 }
-                
-                /* Move forward in time */
-                pn[ii] = pnp1[ii];
             }
 
-            nGoing += pnp1[ii].going;
+            nGoing = 0;
         }
-        if(nGoing == 0)
-        {
-            cout << "All particles finished simulating" << endl;
-            break;
-        }
-
-        t += dt;
+        
+        time_record.emplace_back(pnp1);
     }
-
-    return nGoing;
 }
 
 
@@ -114,19 +241,21 @@ real Implicit_AeroForce(vec<real,3> const& Vdiff, FLUID const& fvar, part const&
 void Implicit_BFD1(FLUID const& fvar, part const& pn, part& pnp1)
 {
     vec<real,3> const Vdiff = pnp1.faceV - pnp1.v ;
-    vec<real,3> const g(0,0,0.0);
+    // vec<real,3> const g(0,0,-9.81);
+    vec<real,3> const g(0.0,0.0,0.0);
 
     real res = Implicit_AeroForce(Vdiff, fvar, pnp1);
     
     pnp1.acc = res;
-    pnp1.v = (pn.v + pnp1.dt*res*pnp1.faceV + pnp1.dt*g)/(1 + pnp1.dt*res);
+    pnp1.v = (pn.v + pnp1.dt*res*pnp1.faceV + pnp1.dt*g)/(1.0 + pnp1.dt*res);
     pnp1.xi = pn.xi+0.5*pnp1.dt*(pnp1.v + pn.v); 
 }
 
 void Implicit_BFD2(FLUID const& fvar, real const& dt, real const& dtm1, part const& pnm1, part const& pn, part& pnp1)
 {
     vec<real,3> const Vdiff = pnp1.faceV - pnp1.v ;
-    vec<real,3> const g(0,0,0.0);
+    // vec<real,3> const g(0,0,-9.81);
+    vec<real,3> const g(0.0,0.0,0.0);
 
     real res = Implicit_AeroForce(Vdiff, fvar, pnp1);
 
@@ -139,8 +268,10 @@ void Implicit_BFD2(FLUID const& fvar, real const& dt, real const& dtm1, part con
     pnp1.xi = pn.xi+0.5*pnp1.dt*(pnp1.v + pn.v); /* Just a first order space integration. */
 }
 
-int Implicit_Integrate(SETT& svar, FLUID const& fvar, Vec_Tree const& TREE, MESH const& cells, 
-                        State& pnm1, State& pn, State& pnp1, vector<State>& time_record, ofstream& fout)
+void Implicit_Integrate(SETT& svar, FLUID const& fvar, MESH const& cells, 
+                        State& pnm1, State& pn, State& pnp1, 
+                        vector<State>& time_record, 
+                        vector<vector<SURF>>& surface_faces, vector<SURF>& marker_data)
 {
     uint nGoing = pnp1.size();
 
@@ -158,7 +289,7 @@ int Implicit_Integrate(SETT& svar, FLUID const& fvar, Vec_Tree const& TREE, MESH
             pnp1[ii].faceRho = 0.5*(pnp1[ii].cellRho + pn[ii].cellRho);
 
             int iter = 0;
-            int min_iter = 2;
+            int min_iter = 3;
             real error = 1.0;
             while(error > -7.0 && iter < min_iter)
             {
@@ -168,7 +299,10 @@ int Implicit_Integrate(SETT& svar, FLUID const& fvar, Vec_Tree const& TREE, MESH
                 real const dt = pnp1[ii].dt;
                 real const dtm1 = pnp1[ii].dt;
                 
-                Implicit_BFD2(fvar, dt, dtm1, pnm1[ii], pn[ii], pnp1[ii]);
+                if(svar.eqOrder == 2)
+                    Implicit_BFD2(fvar, dt, dtm1, pnm1[ii], pn[ii], pnp1[ii]);
+                else
+                    Implicit_BFD1(fvar, pn[ii], pnp1[ii]);
 
                 FindFace(svar, cells, pn[ii], pnp1[ii]);
                 /* Now c+1 is known, use the central difference face properties*/
@@ -183,19 +317,33 @@ int Implicit_Integrate(SETT& svar, FLUID const& fvar, Vec_Tree const& TREE, MESH
                     break;
             }
 
-            if(pnp1[ii].cellID < 0 )
+            if(svar.partout == 1)
+                Write_ASCII_Point(svar.partfiles[ii], svar.scale, pnp1[ii], ii);
+
+            if(pnp1[ii].going == 0)
             {
-                pnp1[ii].going = 0;
-                cout << "Particle " << ii << " stopped iterating" << endl;
+                if(pnp1[ii].cellID < 0 )
+                {
+                    Terminate_Particle(svar,cells,time_record,pnp1[ii],surface_faces,marker_data);
+                    svar.nSuccess++;
+                }
+                else
+                {
+                    svar.nFailed++;
+                }
+
             } 
+
             
             /* Move forward in time */
-            cout << "Time: " << pnp1[ii].t << " dt: " << pnp1[ii].dt  << " x: " <<
-            pnp1[ii].xi[0] << " y: " << pnp1[ii].xi[1] << " z: " << pnp1[ii].xi[2] << 
-            " old cell: " << pn[ii].cellID << " new cell: " << pnp1[ii].cellID << endl;
+            // cout << "Time: " << pnp1[ii].t << " dt: " << pnp1[ii].dt  << " x: " <<
+            // pnp1[ii].xi[0] << " y: " << pnp1[ii].xi[1] << " z: " << pnp1[ii].xi[2] << 
+            // " old cell: " << pn[ii].cellID << " new cell: " << pnp1[ii].cellID << endl;
 
             /* March forward in time */
-            pnm1[ii] = pn[ii];
+            if(svar.eqOrder == 2)
+                pnm1[ii] = pn[ii];
+
             pn[ii] = pnp1[ii];
 
         }
@@ -203,6 +351,7 @@ int Implicit_Integrate(SETT& svar, FLUID const& fvar, Vec_Tree const& TREE, MESH
         nGoing += pnp1[ii].going;
         pnp1[ii].t += pnp1[ii].dt;
     }
+    time_record.emplace_back(pnp1);
 
     while(nGoing != 0)
     {
@@ -221,19 +370,23 @@ int Implicit_Integrate(SETT& svar, FLUID const& fvar, Vec_Tree const& TREE, MESH
                 pnp1[ii].faceRho = 0.5*(pnp1[ii].cellRho + pn[ii].cellRho);
 
                 int iter = 0;
-                int min_iter = 5;
+                int min_iter = 3;
                 real error = 1.0;
                 while(error > -7.0 && iter < min_iter)
                 {
                     // cout << "Iteration: " << iter << endl; 
                     vec<real,3> temp = pnp1[ii].xi;
-                    // Implicit_BFD1(fvar, pn[ii], pnp1[ii]);
+                    
                     real const dt = pnp1[ii].dt;
                     real dtm1 = pnp1[ii].dt;
                     if(iter > 0)
                         dtm1 = pn[ii].dt;
 
-                    Implicit_BFD2(fvar, dt, dtm1, pnm1[ii], pn[ii], pnp1[ii]);
+                    if(svar.eqOrder == 2)
+                        Implicit_BFD2(fvar, dt, dtm1, pnm1[ii], pn[ii], pnp1[ii]);
+                    else
+                        Implicit_BFD1(fvar, pn[ii], pnp1[ii]);
+
 
                     FindFace(svar, cells, pn[ii], pnp1[ii]);
                     /* Now c+1 is known, use the central difference face properties*/
@@ -248,19 +401,23 @@ int Implicit_Integrate(SETT& svar, FLUID const& fvar, Vec_Tree const& TREE, MESH
                         break;
                 }
 
+                if(svar.partout == 1)
+                    Write_ASCII_Point(svar.partfiles[ii], svar.scale, pnp1[ii], ii);
+
                 if(pnp1[ii].cellID < 0 )
                 {
-                    pnp1[ii].going = 0;
-                    cout << "Particle " << ii << " stopped iterating" << endl;
+                    Terminate_Particle(svar,cells,time_record,pnp1[ii],surface_faces,marker_data);
                 } 
-                
-                /* Move forward in time */
-                cout << "Time: " << pnp1[ii].t << " dt: " << pnp1[ii].dt  << " x: " <<
-                pnp1[ii].xi[0] << " y: " << pnp1[ii].xi[1] << " z: " << pnp1[ii].xi[2] << 
-                " old cell: " << pn[ii].cellID << " new cell: " << pnp1[ii].cellID << endl;
+                    
+                // /* Move forward in time */
+                // cout << "Time: " << pnp1[ii].t << " dt: " << pnp1[ii].dt  << " x: " <<
+                // pnp1[ii].xi[0] << " y: " << pnp1[ii].xi[1] << " z: " << pnp1[ii].xi[2] << 
+                // " old cell: " << pn[ii].cellID << " new cell: " << pnp1[ii].cellID << endl;
 
                 /* March forward in time */
-                pnm1[ii] = pn[ii];
+                if(svar.eqOrder == 2)
+                    pnm1[ii] = pn[ii];
+                
                 pn[ii] = pnp1[ii];
 
             }
@@ -269,10 +426,8 @@ int Implicit_Integrate(SETT& svar, FLUID const& fvar, Vec_Tree const& TREE, MESH
             pnp1[ii].t += pnp1[ii].dt;
         }
         time_record.emplace_back(pnp1);
-        Write_ASCII_Timestep(fout,svar,pnp1);
     }
-    cout << "All particles finished simulating" << endl;
-    return nGoing;
+    
 }
 
 

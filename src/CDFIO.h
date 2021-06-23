@@ -61,6 +61,97 @@ void Average_Point_to_Cell(vector<real> const &pData, vector<real> &cData,
 /*****************************************************************************/
 /*************** READING NETCDF CELL BASED DATA FUNCTIONS ********************/
 /*****************************************************************************/
+void Read_BMAP(SETT& svar)
+{
+	#ifdef DEBUG
+	dbout << "Entering Find_Bmap_Markers..." << endl;
+	#endif
+	string const& bmapIn = svar.taubmap; 
+	std::ifstream fin(bmapIn, std::ios::in);
+
+	if (!fin.is_open())
+	{
+		cout << "Couldn't open the boundary map file." << endl;
+		cout << "Attempted path: " << bmapIn << endl;
+		exit(-1);
+	}
+
+	/* Find out how many blocks, i.e. how many boundaries to expect. */
+	uint nBlocks = 0;
+	string line;
+	while (getline(fin, line))
+	{
+		if (line.find("block end") != string::npos)
+		{ /*We're on a new block*/
+			nBlocks++;
+		}
+	}
+	fin.clear();
+	fin.seekg(0);
+	
+	uint blockno = 0;
+
+	svar.markers = vector<int>(nBlocks,0);
+	svar.bnames = vector<string>(nBlocks);
+	svar.bwrite = vector<int>(nBlocks,0);
+
+	vector<string> types(nBlocks);
+
+	while (getline(fin, line))
+	{
+		/* Remove whitespace */
+		line = ltrim(line);
+		/* Check if line is commented out */
+		if (line[0] == '#')
+			continue;
+
+		if (line.find("Markers") != string::npos)
+		{
+			string value = Get_Parameter_Value(line);
+			std::istringstream sstr(value);
+			sstr >> svar.markers[blockno];
+		}
+
+		if (line.find("Name") != string::npos)
+		{ /* Get the name */
+			svar.bnames[blockno] = Get_Parameter_Value(line);
+		}
+
+		if (line.find("Type") != string::npos)
+		{ /* Get the name */
+			types[blockno] = Get_Parameter_Value(line);
+		}
+
+		if (line.find("Write surface data (0/1)") != string::npos)
+		{
+			string value = Get_Parameter_Value(line);
+			std::istringstream sstr(value);
+			sstr >> svar.bwrite[blockno];
+		}
+
+		if (line.find("block end") != string::npos)
+		{ /*We're on a new block*/
+			blockno++;
+		}
+	}
+
+	fin.close();
+
+	/* Check if the boundary has a name. If not, then give it the type name*/
+	for(size_t ii = 0; ii < nBlocks;  ++ii)
+	{
+		if(svar.bnames[ii].empty())
+		{
+			svar.bnames[ii] = types[ii];
+		}
+	}
+
+	#ifdef DEBUG
+	dbout << "Exiting Find_Bmap_Markers..." << endl;
+	#endif
+}
+
+
 /*To run on the solution file*/
 vector<real> Get_Scalar_Property_real(int &fin, string const &variable, size_t const &nPts)
 {
@@ -656,9 +747,10 @@ void Place_Faces(int &fin, size_t const &nFace, MESH &cells)
 	vector<std::pair<lint, lint>> leftright(nFace);
 	cells.smarkers = vector<std::pair<size_t,int>>(cells.nSurf);
 	
-	size_t jj = 0;
+	vector<size_t> surf_IDs;
 	#pragma omp parallel shared(leftright)
 	{
+		vector<size_t> local;
 		#pragma omp for schedule(static) nowait
 		for (size_t ii = 0; ii < nFace; ++ii)
 		{
@@ -672,11 +764,33 @@ void Place_Faces(int &fin, size_t const &nFace, MESH &cells)
 					cells.cFaces[rindex].emplace_back(ii);
 				else
 				{
-					cells.smarkers[jj].first = ii;
-					cells.smarkers[jj].second = markers[jj];
-					jj++;
+					local.emplace_back(ii);
 				}
 			}
+		}
+
+		#pragma omp for schedule(static) ordered
+		for(int ii = 0; ii < omp_get_num_threads(); ++ii)
+		{
+			#pragma omp ordered
+			surf_IDs.insert(surf_IDs.end(),local.begin(),local.end());
+		}
+
+		#pragma omp single
+		{
+			if(surf_IDs.size() != cells.nSurf)
+			{
+				cout << "Mismatch of number of surface faces identified, and the number given" << endl;
+				cout << "Identified: " << surf_IDs.size() << "  Given: " << cells.nSurf << endl;
+				exit(-1);
+			}
+		}
+
+		#pragma omp for schedule(static) nowait
+		for(size_t ii = 0; ii < cells.nSurf; ++ii)
+		{
+			cells.smarkers[ii].first = surf_IDs[ii];
+			cells.smarkers[ii].second = markers[ii];
 		}
 	}
 
@@ -952,6 +1066,8 @@ void Read_TAUMESH_FACE(SETT &svar, MESH &cells)
 	// {
 	// 	cells.cMass[ii] = cells.cRho[ii] * cells.cVol[ii];
 	// }
+
+	cout << "Cell processing complete!" << endl;
 }
 
 #endif
