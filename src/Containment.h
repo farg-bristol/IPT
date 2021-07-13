@@ -763,8 +763,8 @@ void FindFace(SETT const& svar, MESH const& cells, part const& pn, part& pnp1)
     vec<real,3> testv = 0.5*(pnp1.v + pn.v);
 
     /* Test point: starting position*/
-    vec<real,3> testp = pn.xi - 1e5*testv;
-    vec<real,3> rayp = pn.xi + 1e5*testv;
+    vec<real,3> testp = pn.xi - 1e3*testv.normalized();
+    vec<real,3> rayp = pn.xi + 1e3*testv.normalized();
 
     vector<lint> intersects;
 
@@ -843,11 +843,11 @@ void FindFace(SETT const& svar, MESH const& cells, part const& pn, part& pnp1)
 
     if (hasintersect == 0)
     {
-        cout << "Could not find a positive intersection for some reason..." << endl;
-        cout << "No of intersections with planes: " << intersects.size() << endl;
-        cout << "ParticleID: " << pnp1.partID << " position: " << pn.xi[0] << "  " << pn.xi[1]
-        << "  " << pn.xi[2] << " velocity n: " << pn.v[0] << "  " << pn.v[1] << "  " << pn.v[2] <<
-         " velocity np1: " << pnp1.v[0] << "  " << pnp1.v[1] << "  " << pnp1.v[2] << endl;
+        // cout << "Could not find a positive intersection for some reason..." << endl;
+        // cout << "No of intersections with planes: " << intersects.size() << endl;
+        // cout << "ParticleID: " << pnp1.partID << " position: " << pn.xi[0] << "  " << pn.xi[1]
+        // << "  " << pn.xi[2] << " velocity n: " << pn.v[0] << "  " << pn.v[1] << "  " << pn.v[2] <<
+        //  " velocity np1: " << pnp1.v[0] << "  " << pnp1.v[1] << "  " << pnp1.v[2] << endl;
         pnp1.xi = pn.xi;
         pnp1.v = pn.v;
         pnp1.dt = 0.0;

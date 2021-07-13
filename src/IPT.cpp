@@ -26,46 +26,44 @@ inline bool file_exists (const std::string& name) {
   return (stat (name.c_str(), &buffer) == 0); 
 }
 
-int main(int argc, char** argv)
+int isDirectoryEmpty(string const& dirname) {
+  int n = 0;
+  struct dirent *d;
+  DIR *dir = opendir(dirname.c_str());
+  if (dir == NULL) //Not a directory or doesn't exist
+    return 1;
+  while ((d = readdir(dir)) != NULL) {
+    if(++n > 2)
+      break;
+  }
+  closedir(dir);
+  if (n <= 2) //Directory Empty
+    return 1;
+  else
+    return 0;
+}
+
+void Run_Simulation(SETT& svar, FLUID& fvar, MESH const& cells, Vec_Tree const& TREE,
+             vector<int> const& marks, vector<real>& avg_beta, vector<real>& avg_area, vector<int>& avg_count)
 {
-    SETT svar;
-    FLUID fvar;
-
-    Read_Settings(argv,svar,fvar);
-
     State pnm1,pn,pnp1;
 
-    vector<State> part_time;
+    vector<vector<part>> part_time;
 
-    MESH cells;
-    
-    vector<vector<SURF>> surface_faces;
     vector<SURF> surface_data;
 
-    Read_BMAP(svar);
-
-    Read_TAUMESH_FACE(svar,cells);
-
-    if(cells.cCentre.empty())
-    {
-        cout << "Mesh not initialised. Cannot continue." << endl;
-        exit(-1);
-    }
-
-
-
-    Vec_Tree TREE(3,cells.cCentre,20);
-
     Init_Points(svar,fvar,TREE,cells,pn);
+
     if(svar.eqOrder == 2)
         pnm1 = pn; 
 
     pnp1 = pn;
 
-    /* Initialise the surface tracking structure. */
-    Init_Surface(svar,cells,surface_faces, surface_data);
+    part_time = vector<vector<part>>(pnp1.size(),vector<part>());
 
-    part_time.emplace_back(pnp1);
+    /* Initialise the surface tracking structure. */
+    Init_Surface(svar,cells, surface_data);
+
 
     if(svar.partout == 1)
     {
@@ -103,7 +101,7 @@ int main(int argc, char** argv)
             }
             Write_ASCII_variables(svar.partfiles[ii]);
             Write_ASCII_Scatter_Header(svar.partfiles[ii],ii);
-            Write_ASCII_Point(svar.partfiles[ii], svar.scale, pnp1[ii], ii);
+            Write_ASCII_Point(svar.partfiles[ii], svar.scale, pnp1[ii]);
         }
     }
 
@@ -113,10 +111,7 @@ int main(int argc, char** argv)
         cmd.append(svar.streakdir);
         cmd.append("/particle_*_streaks.dat");
 
-        string file = svar.streakdir;
-        file.append("/particle_0_streaks.dat");
-
-        if(file_exists(file))
+        if(!isDirectoryEmpty(svar.streakdir))
   		{
             if (system(cmd.c_str()))
             {
@@ -133,10 +128,7 @@ int main(int argc, char** argv)
         cmd.append(svar.celldir);
         cmd.append("/particle_*_cells.dat");
         
-        string file = svar.celldir;
-        file.append("/particle_0_cells.dat");
-
-        if(file_exists(file))
+        if(!isDirectoryEmpty(svar.celldir))
   		{
             if (system(cmd.c_str()))
             {
@@ -146,23 +138,102 @@ int main(int argc, char** argv)
             }
         }
     }
+
+    for(size_t ii = 0; ii < pnp1.size(); ++ii)
+        part_time[ii].emplace_back(pnp1[ii]);
+
+    svar.nSuccess = 0;
+    svar.nFailed = 0;
     
     /* Do an initial sweep of trajectories */
     if(svar.explicit_or_implicit == 0)
     {
-        cout << "Starting Newmark-Beta simulation..." << endl;
-        Explicit_Integrate(svar,fvar,TREE,cells,pn,pnp1,part_time,surface_faces,surface_data);
+        cout << "Starting Newmark-Beta simulation. Particle diameter: " << fvar.d_0*1e6 << endl;
+        cout << "Number of particles: " << pnp1.size() << endl;
+        #pragma omp parallel for schedule(dynamic) shared(pn,pnp1,part_time)
+        for(size_t ii = 0; ii < pnp1.size(); ++ii)
+            Explicit_Integrate(svar,fvar,TREE,cells,ii,pn[ii],pnp1[ii],part_time[ii],surface_data);
     }
     else
     {
-        cout << "Starting Implicit simulation..." << endl;
-        Implicit_Integrate(svar,fvar,cells,pnm1,pn,pnp1,part_time,surface_faces,surface_data);
+        cout << "Starting implicit simulation. Particle diameter: " << fvar.d_0*1e6 << endl;
+        cout << "Number of particles: " << pnp1.size() << endl;
+        #pragma omp parallel for schedule(dynamic) shared(pnm1,pn,pnp1,part_time)
+        for(size_t ii = 0; ii < pnp1.size(); ++ii)
+            Implicit_Integrate(svar,fvar,cells,ii,pnm1[ii],pn[ii],pnp1[ii],part_time[ii],surface_data);
     }
+
+    /* Prevent the writing of data for particles used to get catch efficiency */
+    // svar.streakout = 0;
+    svar.cellsout = 0;
+    svar.partout = 0;
 
     cout << "All particles finished simulating" << endl;
 
-    cout << "Doing more particles for catch data" << endl;
     /* Now do additional trajectories to get the catch efficiency */
+    cout << "Doing more particles for catch data" << endl;
+
+    vector<vector<real>> beta_data;
+    vector<vector<real>> area_data;
+    vector<vector<vec<real,3>>> pos_data;
+
+    Get_Catch_Data(svar,fvar,TREE,cells,surface_data,marks,part_time,
+                    beta_data,area_data,pos_data);
+
+    svar.ntot_success += svar.nSuccess;
+    svar.ntot_fail += svar.nFailed;
+
+    /* Write failure statistics */
+    cout << "Number of failed particles: " << svar.nFailed << 
+    "  \% of particles: " << real(svar.nFailed)/real(svar.nFailed+svar.nSuccess) * 100.0 << "\%" << endl;
+    cout << "Total number of failed particles: " << svar.ntot_fail << 
+    " total \% of particles: " << real(svar.ntot_fail)/real(svar.ntot_fail+svar.ntot_success) * 100.0 << "\%" << endl;
+
+    
+    // auto ptr = std::max_element(pnp1.begin(), pnp1.end(), 
+    //         [](part const& a, part const& b){return a.nIters > b.nIters;});
+    // uint max_integ = ptr->nIters;
+
+    // cout << "Maximum number of cells passed through: " << max_integ << endl;
+
+    cout << "Post processing" << endl;
+    Post_Process(svar, marks, beta_data, area_data, surface_data);
+
+    // cout << "Writing catch efficiency data" << endl;
+    // Write_Aerofoil_Catch_Efficiency(svar,fvar,cells,marks,beta_data,area_data,pos_data);
+
+    cout << "Writing surface impact data" << endl;
+    Write_ASCII_Impacts(svar, fvar, cells, surface_data, beta_data);
+
+    for(size_t ii = 0; ii < marks.size(); ++ii)
+    {
+        avg_beta[ii] = surface_data[marks[ii]].marker_beta;
+        avg_area[ii] = surface_data[marks[ii]].marker_area;
+        avg_count[ii] = surface_data[marks[ii]].marker_count;
+    }
+}
+
+int main(int argc, char** argv)
+{
+    SETT svar;
+    FLUID fvar;
+
+    Read_Settings(argv,svar,fvar);
+
+    MESH cells;
+
+    Read_BMAP(svar);
+
+    Read_TAUMESH_FACE(svar,cells);
+
+    if(cells.cCentre.empty())
+    {
+        cout << "Mesh not initialised. Cannot continue." << endl;
+        exit(-1);
+    }
+
+    Vec_Tree TREE(3,cells.cCentre,10);
+
     vector<int> marks;
     for(size_t ii = 0; ii < svar.bwrite.size(); ii++)
     {
@@ -172,121 +243,104 @@ int main(int argc, char** argv)
         }
     }
 
-    SURF const& test_surface = surface_data[marks[0]];
-    
-    // test_surface.name = svar.bnames[marks[0]];
-    // test_surface.marker = svar.markers[marks[0]];
-
-    // test_surface.count = surface_data[marks[0]].count;
-    // test_
-
-    /* Prevent the writing of data for particles used to get catch efficiency */
-    svar.streakout = 0;
-    svar.cellsout = 0;
-    svar.partout = 0;
-
-
-    vector<real> beta_data;
-    vector<real> area_data;
-    vector<vec<real,3>> pos_data;
-
-    for(size_t ii = 0; ii < test_surface.count; ++ii)
+    if(svar.particle_sweep == 0)
     {
-        /* For each impacting point, do a trajectory above and below, to get the catch efficiency */
-        real delta = 1e-3;
-        vec<real,3> const& xi = test_surface.start_pos[ii];
-
-        vec<real,3> xi_1 = xi;
-        vec<real,3> xi_2 = xi;
-
-        xi_1[2] += delta;
-        xi_2[2] -= delta;
-
-        State beta_test, beta_testnp1, beta_testnm1;
-        beta_test.emplace_back(part(xi_1,part_time[0][test_surface.pIDs[ii]]));
-        beta_test.emplace_back(part(xi_2,part_time[0][test_surface.pIDs[ii]]));
-
-        beta_testnp1 = beta_test;
-
-        vector<State> beta_time;
-        beta_time.emplace_back(beta_test);
-
-        vector<SURF> beta_marker;
-        // vector<vector<SURF>> beta_faces = surface_faces;
-
-        for(size_t jj = 0; jj < svar.markers.size(); jj++)
-        {
-            beta_marker.emplace_back(SURF(surface_data[jj]));
-            // beta_faces.emplace_back(surface_faces[jj]);
-        }
-
-        Implicit_Integrate(svar,fvar,cells,beta_testnm1,beta_test,beta_testnp1,part_time,surface_faces,beta_marker);
-
-        /* Make sure they have both hit the same surface */
-        if (beta_marker[marks[0]].count == 2)
-        {
-            /* Get the difference in end area. */
-            vec<real,3> diff = beta_marker[marks[0]].end_pos[0] - beta_marker[marks[0]].end_pos[1];
-
-            real dist = diff.norm();
-
-            real beta_i = 2*delta/dist;
-
-            beta_data.emplace_back(beta_i);
-            area_data.emplace_back(dist);
-            vec<real,3> point = 0.5*(beta_marker[marks[0]].end_pos[0] + beta_marker[marks[0]].end_pos[1]);
-            pos_data.emplace_back(point);
-
-        }
-        else if (beta_marker[marks[0]].count == 1)
-        {
-            /* Only one has hit the same marker. So use the original point and the successful one */
-            vec<real,3> diff = beta_marker[marks[0]].end_pos[0] - test_surface.end_pos[ii];
-
-            real dist = diff.norm();
-
-            real beta_i = delta/dist;
-
-            beta_data.emplace_back(beta_i);
-            area_data.emplace_back(dist);
-
-            vec<real,3> point = 0.5*(beta_marker[marks[0]].end_pos[0] + test_surface.end_pos[ii]);
-            pos_data.emplace_back(point);
-            
-        }
-        /* One will have to have made the same marker, surely... */
-        
+        vector<real> avg_beta(marks.size(),0.0);
+        vector<real> avg_area(marks.size(),0.0);
+        vector<int> avg_count(marks.size(),0.0);
+        Run_Simulation(svar,fvar,cells,TREE, marks, avg_beta, avg_area, avg_count);
     }
+    else
+    {
+        vector<vector<real>> beta_data(marks.size(),vector<real>(svar.nParticle_diams,0.0));
+        vector<vector<real>> area_data(marks.size(),vector<real>(svar.nParticle_diams,0.0));
+        vector<vector<real>> particle_data(marks.size(),vector<real>(svar.nParticle_diams,0.0));
+        vector<vector<int>>  count_data(marks.size(),vector<int>(svar.nParticle_diams,0.0));
 
+        vector<int> total_count(marks.size(),0);
 
-    /* Now get the arc d */
+        /* Do a sweep of particle diameters */
+        for(int jj = 0; jj < svar.nParticle_diams; ++jj)
+        {
+            fvar.d_0 = fvar.diams[jj];
+            vector<real> avg_beta(marks.size());
+            vector<real> avg_area(marks.size());
+            vector<int> avg_count(marks.size());
+            
+            cout << endl << endl;
+            Run_Simulation(svar,fvar,cells,TREE, marks, avg_beta, avg_area, avg_count);
 
+            for(size_t ii = 0; ii < marks.size(); ++ii)
+            {
+                beta_data[ii][jj] = avg_beta[ii];
+                area_data[ii][jj] = avg_area[ii];
+                particle_data[ii][jj] = fvar.d_0*1e6;
+                count_data[ii][jj] = avg_count[ii];
+                total_count[ii] += avg_count[ii];
+            }
+        }
 
+        /* Output graph of beta vs particle size */
+        string file = svar.surfacefile;
+        file.append("_");
+        file.append("Beta_Sweep.dat");
+        
+        ofstream fout(file);
 
+        if(!fout.is_open())
+        {
+            cout << "Couldn't open the particle sweep file." << endl;
+            exit(-1);
+        }
 
+        fout << "TITLE=\"Catch Efficiency vs Particle size\"\n";
+        fout << "VARIABLES= \"Particle diameter (microns)\" \"beta\" \"area\""
+        << " \"count\" \"normalized count\" \"cumulative count\" \"normalized cumulative count\"\n";
 
-    /* Write failure statistics */
-    cout << "Number of failed particles: " << svar.nFailed << 
-    "  \% of particles: " << real(svar.nFailed)/real(pnp1.size()) * 100.0 << "\%" << endl;
-    //    cout << "Time: " << svar.t << " Particles going: " << nGoing << endl; 
-    //    Write_ASCII_Timestep(fout,svar,pnp1);
-    //    part_time.emplace_back(pnp1);
-     
-    // if(fstreak.is_open())
-    //     Write_ASCII_Streaks(fstreak,svar,part_time);
+        
 
-    // fstreak.close();
-    // fout.close();
+        for(size_t ii = 0; ii < marks.size(); ++ii)
+        {
+            fout << "ZONE T=\"" << svar.bnames[marks[ii]] << "\"\n";
 
-    // Write_ASCII_Cells(svar,cells,part_time);
-    cout << "Post processing" << endl;
-    Post_Process(svar,part_time,surface_faces,surface_data);
+            size_t w = 15;
+            size_t w2 = 9;
+            size_t preci = 6;
+            fout << std::left << std::scientific << std::setprecision(preci);
+            fout << std::setw(1);
 
-    cout << "Writing catch efficiency data" << endl;
-    Write_Aerofoil_Catch_Efficiency(svar,cells,marks[0],beta_data,area_data,pos_data);
+            int cum_count = 0;
+            real norm_cum_count = 0;
 
-    cout << "Writing surface impact data" << endl;
-    Write_ASCII_Impacts(svar,cells,surface_faces);
+            for(int jj = 0; jj < svar.nParticle_diams; ++jj)
+            {
+                real norm_count = 0;
+                if(total_count[ii] > 0)
+                    norm_count = real(count_data[ii][jj])/real(total_count[ii]);
+
+                cum_count += count_data[ii][jj];
+                
+                if(total_count[ii] > 0)
+                    norm_cum_count += real(count_data[ii][jj])/real(total_count[ii]);
+                
+                fout << std::setw(w) << particle_data[ii][jj] << std::setw(w) << 
+                beta_data[ii][jj] << std::setw(w) << area_data[ii][jj]
+                 << std::setw(w2) << count_data[ii][jj] << std::setw(w) << norm_count
+                 << std::setw(w2) << cum_count << std::setw(w2) << norm_cum_count << endl;
+
+                
+            }
+
+            // fout << std::setw(w) << particle_data[ii].back() << std::setw(w) << 
+            //     beta_data[ii].back() << std::setw(w) << area_data[ii].back()
+            //         << std::setw(w2) << count_data[ii].back() << std::setw(w) << real(count_data[ii].back())/real(total_count[ii])
+            //         << std::setw(w2) << cum_count << std::setw(w2) << norm_cum_count << endl;
+
+        }
+
+        fout.close();
+
+    }
 
 
     cout << "Finished!" << endl;

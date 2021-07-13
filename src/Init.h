@@ -33,10 +33,10 @@ void Init_Disk_Points(SETT const& svar, FLUID const& fvar,Vec_Tree const& TREE, 
 		
 		for(real theta = 0.0; theta < 2*M_PI; theta += dtheta)
 		{	/* Create a ring of points */
-			real x = rad * sin(theta);
+			real y = rad * sin(theta);
 			real z = rad * cos(theta);
 
-			vec<real,3> xi(x,0,z);
+			vec<real,3> xi(0.0,y,z);
 			// perturb = vec<real,3>(random(interval), random(interval), random(interval));
 			// xi += perturb;
 			pn.emplace_back(part(xi,mass_0,d_0));
@@ -55,7 +55,12 @@ void Init_Disk_Points(SETT const& svar, FLUID const& fvar,Vec_Tree const& TREE, 
 		pn[ii].xi = (svar.rotate * pn[ii].xi) + svar.discPos;
 
 		FindCell(svar,TREE, cells, pn[ii]);
-		
+		if(pn[ii].cellID < 0)
+		{
+			cout << "Could not find the starting cell for particle " << ii << ". Position:" << endl;
+			cout << pn[ii].xi[0] << "  " << pn[ii].xi[1] << "  " << pn[ii].xi[2] << endl;
+			exit(-1);
+		}
 		pn[ii].v = pn[ii].cellV;
 	}	
 }
@@ -74,9 +79,9 @@ void Init_Line_Points(SETT const& svar, FLUID const& fvar,Vec_Tree const& TREE, 
 	real n_i = real(svar.n_i - 1);
 	vec<real,3> di1;
 
-	di1 = (svar.grid_verts[1] - svar.grid_verts[0])/n_i;
+	di1 = (svar.line_verts[1] - svar.line_verts[0])/n_i;
 
-	vec<real,3> const& xi_0 = svar.grid_verts[0];
+	vec<real,3> const& xi_0 = svar.line_verts[0];
 
 	for(int ii = 0; ii < svar.n_i; ++ii)
 	{
@@ -89,11 +94,16 @@ void Init_Line_Points(SETT const& svar, FLUID const& fvar,Vec_Tree const& TREE, 
     for(size_t ii = 0; ii < pn.size(); ++ii)
 	{
         pn[ii].partID = ii;
-
 		FindCell(svar,TREE, cells, pn[ii]);
-		
+		if(pn[ii].cellID < 0)
+		{
+			cout << "Could not find the starting cell for particle " << ii << ". Position:" << endl;
+			cout << pn[ii].xi[0] << "  " << pn[ii].xi[1] << "  " << pn[ii].xi[2] << endl;
+			exit(-1);
+		}
 		pn[ii].v = pn[ii].cellV;
-	}	
+	}
+
 }
 
 void Init_Grid_Points(SETT const& svar, FLUID const& fvar,Vec_Tree const& TREE, MESH const& cells, State& pn)
@@ -127,7 +137,7 @@ void Init_Grid_Points(SETT const& svar, FLUID const& fvar,Vec_Tree const& TREE, 
 			(n_j - real(jj))/n_j * di1 + real(jj)/n_j * di2);
 
 			vec<real,3> const dx_j = real(jj)*(
-			(n_i - real(ii))/n_i * di1 + real(ii)/n_i * di2);
+			(n_i - real(ii))/n_i * dj1 + real(ii)/n_i * dj2);
 
 			vec<real,3> xi = xi_0 + dx_i + dx_j; 
 			pn.emplace_back(part(xi,mass_0,d_0));
@@ -138,6 +148,12 @@ void Init_Grid_Points(SETT const& svar, FLUID const& fvar,Vec_Tree const& TREE, 
 	{
         pn[ii].partID = ii;
 		FindCell(svar,TREE, cells, pn[ii]);
+		if(pn[ii].cellID < 0)
+		{
+			cout << "Could not find the starting cell for particle " << ii << ". Position:" << endl;
+			cout << pn[ii].xi[0] << "  " << pn[ii].xi[1] << "  " << pn[ii].xi[2] << endl;
+			exit(-1);
+		}
 		pn[ii].v = pn[ii].cellV;
 	}	
 }
@@ -158,9 +174,8 @@ void Init_Points(SETT const& svar, FLUID const& fvar,Vec_Tree const& TREE, MESH 
 	}
 }
 
-void Init_Surface(SETT const& svar, MESH const& cells, vector<vector<SURF>>& surf_faces, vector<SURF>& surf_marks)
+void Init_Surface(SETT const& svar, MESH const& cells, vector<SURF>& surf_marks)
 {
-	surf_faces = vector<vector<SURF>>(svar.markers.size(), vector<SURF>());
 	surf_marks = vector<SURF>(svar.markers.size());
 
 	vector<vector<size_t>> faceIDs(svar.markers.size());
@@ -193,16 +208,14 @@ void Init_Surface(SETT const& svar, MESH const& cells, vector<vector<SURF>>& sur
 	{
 		surf_marks[ii].name = svar.bnames[ii];
 		surf_marks[ii].marker = svar.markers[ii];
+		surf_marks[ii].output = svar.bwrite[ii];
+		
+		size_t nFaces = faceIDs[ii].size();
+		surf_marks[ii].faceIDs = faceIDs[ii];
+		surf_marks[ii].face_count = vector<uint>(nFaces,0);
+		surf_marks[ii].face_beta = vector<real>(nFaces,0.0);
+		surf_marks[ii].face_area = vector<real>(nFaces,0.0);
 
-		surf_faces[ii] = vector<SURF>(faceIDs[ii].size());
-
-
-		for(size_t jj = 0; jj < faceIDs[ii].size(); jj++)
-		{
-			surf_faces[ii][jj].faceID = faceIDs[ii][jj];
-			surf_faces[ii][jj].marker = markers[ii][jj];
-		}
-	
 	}
 
 	// /* allocate the impacte vector */

@@ -76,23 +76,23 @@ void Get_Vector(string const& line, string const& param, vec<real,3> &value)
     }
 }
 
-matrix<real,3> GetRotationMat(vec<real,3>& angles)
+matrix<real,3> GetRotationMat(vec<real,3> const& angles)
 {
 
     matrix<real,3> rotx, roty, rotz;
-    rotx = matrix<real,3>(1.0, 0.0            , 0.0           ,
-                0.0, cos(angles[0]) , sin(angles[0]),
-                0.0, -sin(angles[0]), cos(angles[0]));
+    rotx = matrix<real,3>(1.0, 0.0            , 0.0             ,
+                          0.0, cos(angles[0]) , -sin(angles[0]) ,
+                          0.0, sin(angles[0]) , cos(angles[0])  );
 
-    roty = matrix<real,3>(cos(angles[1]) , 0.0 , -sin(angles[1]),
-                0.0            , 1.0 , 0.0            ,
-                sin(angles[1]) , 0.0 , cos(angles[1]));
+    roty = matrix<real,3>(cos(angles[1])  , 0.0 , sin(angles[1])  ,
+                          0.0             , 1.0 , 0.0             ,
+                          -sin(angles[1]) , 0.0 , cos(angles[1]) );
 
-    rotz = matrix<real,3>(cos(angles[2]) , sin(angles[2]) , 0.0 ,
-                -sin(angles[2]), cos(angles[2]) , 0.0 ,
-                0.0            , 0.0            , 1.0 );
+    rotz = matrix<real,3>(cos(angles[2]) , -sin(angles[2]) , 0.0 ,
+                          sin(angles[2]) , cos(angles[2])  , 0.0 ,
+                          0.0            , 0.0             , 1.0 );
 
-    return rotx*roty*rotz;
+    return rotz*roty*rotx;
 }
 
 
@@ -108,7 +108,7 @@ void Read_Settings(char** argv, SETT &svar, FLUID& fvar)
             continue;
 
         /* File Inputs */
-        Get_String(line, "Primary grid filename", svar.taumesh);
+        Get_String(line, "Primary grid face filename", svar.taumesh);
         Get_String(line, "Boundary mapping filename", svar.taubmap);
         Get_String(line, "Restart-data prefix", svar.tausol);
         Get_String(line, "OpenFOAM folder", svar.foamdir);
@@ -133,13 +133,17 @@ void Read_Settings(char** argv, SETT &svar, FLUID& fvar)
         Get_Number(line, "Sutherland reference viscosity", fvar.mu_g);
 
         /* Simulation settings */
+        Get_Number(line, "2D offset vector (0 / x=1,y=2,z=3)",svar.offset_axis);
         Get_String(line, "Trajectory ODE integrator", svar.integration_type);
         Get_Number(line, "Particle timestep", svar.dt);
         Get_Number(line, "Particle frame time", svar.framet);
         Get_Number(line, "Newmark-Beta iteration limit", svar.max_iter);
-        Get_Number(line, "Particle maximum frame time", svar.max_frame);
+        Get_Number(line, "Particle maximum frame number", svar.max_frame);
         Get_Number(line, "Velocity equation order (1/2)", svar.eqOrder);
-        Get_Number(line, "Particle diameter (micron)", fvar.d_0);
+        Get_Number(line, "Maximum x trajectory coordinate", svar.max_x);
+        Get_Number(line, "Catch efficiency delta (micron)", svar.delta);
+        Get_Number(line, "Catch efficiency delta factor", svar.delta_fac);
+        Get_Number(line, "Catch efficiency max delta (micron)", svar.max_delta);        
 
         /* Starting area conditions */
         Get_String(line, "Start grid type", svar.startName);
@@ -159,9 +163,18 @@ void Read_Settings(char** argv, SETT &svar, FLUID& fvar)
         Get_Number(line, "Points in j-direction", svar.n_j);
         
         /* Line */
-        Get_Vector(line, "First point (x,y,z)", svar.grid_verts[0]);
-        Get_Vector(line, "Second point (x,y,z)", svar.grid_verts[1]);
+        Get_Vector(line, "First point (x,y,z)", svar.line_verts[0]);
+        Get_Vector(line, "Second point (x,y,z)", svar.line_verts[1]);
         Get_Number(line, "Resolution of line", svar.n_i);
+
+        /* Particle diameter */
+        Get_Number(line, "Particle diameter sweep (0/1)", svar.particle_sweep);
+        Get_Number(line, "Particle diameter lower bound",fvar.d_lower);
+        Get_Number(line, "Particle diameter upper bound",fvar.d_upper);
+        Get_Number(line, "Particle diameter interval",fvar.d_interval);
+        Get_Number(line, "Particle diameter (micron)", fvar.d_0);
+        Get_Number(line, "Particle sweep resolution",svar.nParticle_diams);
+        Get_String(line, "Particle sweep distribution (linear/log)",svar.distr_type);
 
     }
 
@@ -221,6 +234,16 @@ void Read_Settings(char** argv, SETT &svar, FLUID& fvar)
     // svar.streakdir = svar.outfile;
     // size_t pos = svar.streakfile.find_last_of(".");
     // svar.streakfile.insert(pos,"_streak");
+    
+    if(svar.offset_axis != 0)
+    {
+        svar.dimension = 2;
+    }
+    else if (svar.offset_axis > 3)
+    {
+        cout << "2D offset axis option out of bounds" << endl;
+        exit(-1);
+    }
 
     /* Find a timestep that gets a perfect frame interval */
     if(svar.integration_type.empty())
@@ -253,8 +276,12 @@ void Read_Settings(char** argv, SETT &svar, FLUID& fvar)
         svar.explicit_or_implicit = 1;
     }
     
-
-    
+    if(svar.delta > 0)
+    {
+        svar.fac_or_fixed_delta = 1;
+        svar.delta /=1e6;
+    }
+    svar.max_delta/=1e6;
 
 
     if(svar.startName == "Disk")
@@ -278,7 +305,7 @@ void Read_Settings(char** argv, SETT &svar, FLUID& fvar)
             cout << "Seed disk spacing has not been initialised." << endl;
             exit(-1);
         }
-
+        svar.discAngles *= M_PI/180.0;
         svar.rotate = GetRotationMat(svar.discAngles);
         svar.transp = svar.rotate.transpose();
     }
@@ -343,17 +370,17 @@ void Read_Settings(char** argv, SETT &svar, FLUID& fvar)
         }
 
         /* Check both points of the line are defined */
-        if(svar.grid_verts[0][0] == -500000 || 
-            svar.grid_verts[0][1] == -500000 ||
-            svar.grid_verts[0][2] == -500000)
+        if(svar.line_verts[0][0] == -500000 || 
+            svar.line_verts[0][1] == -500000 ||
+            svar.line_verts[0][2] == -500000)
         {
             cout << "Some or all of the first point is not initialised." << endl;
             exit(-1);
         }
 
-        if(svar.grid_verts[1][0] == -500000 || 
-            svar.grid_verts[1][1] == -500000 ||
-            svar.grid_verts[1][2] == -500000)
+        if(svar.line_verts[1][0] == -500000 || 
+            svar.line_verts[1][1] == -500000 ||
+            svar.line_verts[1][2] == -500000)
         {
             cout << "Some or all of the second point is not initialised." << endl;
             exit(-1);
@@ -364,11 +391,78 @@ void Read_Settings(char** argv, SETT &svar, FLUID& fvar)
         cout << "Starting grid type has not been initialised with a correct value." << endl;
         exit(-1);
     }
+
+    if(svar.particle_sweep == 1)
+    {
+        if(fvar.d_lower == -1)
+        {
+            cout << "Lower particle boundary for sweep has not been defined." << endl;
+            exit(-1);
+        }
+
+        if(fvar.d_upper == -1)
+        {
+            cout << "Upper particle boundary for sweep has not been defined." << endl;
+            exit(-1);
+        }
+
+
+        if(svar.nParticle_diams != 0)
+        {
+            if(svar.distr_type == "log")
+            {
+                svar.particle_distr = 1;
+                real log_interval = (log10(fvar.d_upper) - log10(fvar.d_lower))/real(svar.nParticle_diams-1);
+                fvar.diams = vector<real>(svar.nParticle_diams,0.0);
+                fvar.diams[0] = 1e-6*fvar.d_lower;
+                for(int ii = 1; ii < svar.nParticle_diams; ++ii)
+                {
+                    real log_diam = log10(fvar.d_lower) + ii*log_interval;
+                    fvar.diams[ii] = 1e-6 * (pow(10,log_diam));
+                }
+
+                fvar.d_interval = log_interval; 
+            }
+            else if (svar.distr_type == "linear")
+            {
+                svar.particle_distr = 0;
+                fvar.d_interval = (fvar.d_upper - fvar.d_lower)/real(svar.nParticle_diams-1); 
+                fvar.diams = vector<real>(svar.nParticle_diams,0.0);
+                for(int ii = 0; ii < svar.nParticle_diams; ++ii)
+                {
+                    fvar.diams[ii] = 1e-6 * (fvar.d_lower + real(ii)*fvar.d_interval);
+                }
+            }
+            
+        }
+        else if (fvar.d_interval != -1)
+        {
+            if(svar.distr_type == "log")
+            {
+                cout << "A logarithmic distribution is only available with a resolution definition" << endl;
+                exit(-1);
+            }
+
+            svar.nParticle_diams = ceil((fvar.d_upper - fvar.d_lower)/fvar.d_interval)+1;
+
+            fvar.d_interval = (fvar.d_upper - fvar.d_lower)/real(svar.nParticle_diams-1);
+            fvar.diams = vector<real>(svar.nParticle_diams,0.0);
+            for(int ii = 0; ii < svar.nParticle_diams; ++ii)
+            {
+                fvar.diams[ii] = 1e-6 * (fvar.d_lower + real(ii)*fvar.d_interval);
+            }
+        }
+        else
+        {
+            cout << "Particle interval metric mot defined. Either specify resolution or spacing" << endl;
+            exit(-1);
+        }
+    }
  
-
     fvar.d_0 /= 1e6;
-
-    
+    fvar.d_lower /= 1e6;
+    fvar.d_upper /= 1e6;
+    fvar.d_interval /= 1e6;
 
     // if(svar.foamdir.empty())
     // {
@@ -395,7 +489,7 @@ void Write_ASCII_Scatter_Header(ofstream& fp, size_t const& pID)
     fp << std::left << std::scientific << std::setprecision(6);
 }
 
-void Write_ASCII_Point(ofstream& fp, real const& scale, part const& pnp1, size_t ptID)
+void Write_ASCII_Point(ofstream& fp, real const& scale, part const& pnp1)
 {
     const static uint width = 15;
 
@@ -410,7 +504,7 @@ void Write_ASCII_Point(ofstream& fp, real const& scale, part const& pnp1, size_t
 
     fp << setw(width) << pnp1.acc.norm(); 
 
-    fp << setw(width) << ptID;
+    fp << setw(width) << pnp1.partID;
 
     fp << setw(width) << pnp1.cellV.norm();
 
@@ -426,18 +520,18 @@ void Write_ASCII_Timestep(ofstream& fp, SETT& svar, State const& pnp1)
     
     for (size_t ii = 0; ii < pnp1.size(); ++ii)
     {
-        Write_ASCII_Point(fp, svar.scale, pnp1[ii], ii);
+        Write_ASCII_Point(fp, svar.scale, pnp1[ii]);
     }
     fp << std::flush;
 }
 
-void Write_ASCII_Streaks(SETT const& svar, vector<State> const& t_pnp1, part const& pnp1, uint const& pID)
+void Write_ASCII_Streaks(SETT const& svar, vector<part> const& t_pnp1, part const& pnp1)
 {
     /* Write file for each particle. Gonna get way too confusing otherwise */
 
     string file = svar.streakdir;
     file.append("/particle_");
-    file.append(std::to_string(pID));
+    file.append(std::to_string(pnp1.partID));
     file.append("_streaks.dat");
     ofstream fp(file);
 
@@ -447,7 +541,7 @@ void Write_ASCII_Streaks(SETT const& svar, vector<State> const& t_pnp1, part con
         exit(-1);
     }
 
-    fp << "TITLE = \"Ash Particle " << pID << " Streaks\"\n";
+    fp << "TITLE = \"Ash Particle " << pnp1.partID << " Streaks\"\n";
 	Write_ASCII_variables(fp);
      
     size_t nTimes = t_pnp1.size();
@@ -455,21 +549,26 @@ void Write_ASCII_Streaks(SETT const& svar, vector<State> const& t_pnp1, part con
     
     
 
-    fp <<  "ZONE T=\"" << "Ash particle " << pID << "\"";
-    fp <<", I=" << nTimes+1 << ", J=1, K=1, DATAPACKING=POINT"<< "\n";
+    fp <<  "ZONE T=\"" << "Ash particle " << pnp1.partID << "\"";
+    if(pnp1.failed == 0)
+        fp <<", I=" << nTimes+1 << ", J=1, K=1, DATAPACKING=POINT"<< "\n";
+    else
+        fp <<", I=" << nTimes << ", J=1, K=1, DATAPACKING=POINT"<< "\n";
+
     fp << std::left << std::scientific << std::setprecision(6);
     for (time = 0; time < nTimes; ++time)
     { /* Inner loop to write the times of the particle */
-        Write_ASCII_Point(fp, svar.scale, t_pnp1[time][pID], pID);    
+        Write_ASCII_Point(fp, svar.scale, t_pnp1[time]);
     }
 
-    Write_ASCII_Point(fp, svar.scale, pnp1, pID);   
+    if(pnp1.failed == 0)
+        Write_ASCII_Point(fp, svar.scale, pnp1);
 
     fp.close();
 
 }
 
-void Write_ASCII_Cells(SETT const& svar, MESH const& cells, vector<State> const& t_pnp1, uint const& pID)
+void Write_ASCII_Cells(SETT const& svar, MESH const& cells, vector<part> const& t_pnp1)
 {
     size_t nTimes = t_pnp1.size();
     size_t time = 0;
@@ -477,7 +576,7 @@ void Write_ASCII_Cells(SETT const& svar, MESH const& cells, vector<State> const&
     /* Write file for each particle. Gonna get way too confusing otherwise */
     string file = svar.celldir;
     file.append("/particle_");
-    file.append(std::to_string(pID));
+    file.append(std::to_string(t_pnp1[0].partID));
     file.append("_cells.dat");
     ofstream fout(file);
 
@@ -487,8 +586,8 @@ void Write_ASCII_Cells(SETT const& svar, MESH const& cells, vector<State> const&
         exit(-1);
     }
 
-    fout << "TITLE = \"Ash particle " << pID << " intersecting cells\"\n";
-    
+    fout << "TITLE = \"Ash particle " << t_pnp1[0].partID << " intersecting cells\"\n";
+
     int TotalNumFaceNodes = 0;
 
     vector<size_t> vertIndexes;
@@ -501,12 +600,10 @@ void Write_ASCII_Cells(SETT const& svar, MESH const& cells, vector<State> const&
     vector<lint> right;
 
 
- 
-
     /* Get cell properties for the intersected cells (delete duplicates later)*/
     for (time = 0; time < nTimes; ++time)
     {
-        lint cellID = t_pnp1[time][pID].cellID;
+        lint cellID = t_pnp1[time].cellID;
         
         /* Find how many vertices the cell has */
         vertIndexes.insert(vertIndexes.end(), cells.elems[cellID].begin(), cells.elems[cellID].end());
@@ -585,7 +682,7 @@ void Write_ASCII_Cells(SETT const& svar, MESH const& cells, vector<State> const&
 
     
     fout << "VARIABLES= \"X\" \"Y\" \"Z\" " << endl;
-    fout << "ZONE T=\"particle " << pID << " intersecting cells\"" << endl;
+    fout << "ZONE T=\"particle " << t_pnp1[0].partID << " intersecting cells\"" << endl;
     fout << "ZONETYPE=FEPOLYHEDRON" << endl;
     fout << "NODES=" << usedVerts.size() << " ELEMENTS=" << cellIndexes.size() << 
             " FACES=" << faces.size() << endl;
@@ -681,41 +778,44 @@ void Write_ASCII_Cells(SETT const& svar, MESH const& cells, vector<State> const&
 }
 
 
-void Write_ASCII_Impacts(SETT const& svar, MESH const& cells, vector<vector<SURF>> const& surfs)
+void Write_ASCII_Impacts(SETT const& svar, FLUID const& fvar, MESH const& cells, 
+            vector<SURF> const& surfs, vector<vector<real>> const& beta_data)
 {
     // uint nSurf = svar.markers.size();
     uint nSurf = 0;
     vector<int> marks;
     vector<string> names;
-    for(size_t ii = 0; ii < svar.bwrite.size(); ii++)
+    vector<SURF> surfaces_to_write;
+    for(size_t ii = 0; ii < surfs.size(); ii++)
     {
-        nSurf += svar.bwrite[ii];
-        if(svar.bwrite[ii] == 1)
+        if(surfs[ii].output == 1)
         {
             marks.emplace_back(svar.markers[ii]);
             names.emplace_back(svar.bnames[ii]);
+            surfaces_to_write.emplace_back(surfs[ii]);
         }
+        nSurf += surfs[ii].output;
     }
+
+    nSurf = 0;
+    for(size_t ii = 0; ii < surfs.size(); ii++)
+    {
+        if(surfs[ii].output == 1)
+        {
+            surfaces_to_write[nSurf].face_count = surfs[ii].face_count;
+            surfaces_to_write[nSurf].face_beta = surfs[ii].face_beta;
+            surfaces_to_write[nSurf].face_area = surfs[ii].face_area;
+        }
+        nSurf += surfs[ii].output;
+    }
+    
 
     vector<vector<vector<size_t>>> faces(nSurf);
     vector<std::pair<size_t,int>> smarkers = cells.smarkers;
 
     vector<vector<size_t>> vertIndexes(nSurf);
     vector<vector<vec<real,3>>> usedVerts(nSurf);
-    vector<vector<SURF>> surfaces_to_write(nSurf);
-
-    size_t surf = 0;
-    for(size_t ii = 0; ii < surfs.size(); ++ii)
-    {
-        if(svar.bwrite[ii] == 0)
-        {
-            continue;
-        }
-
-        surfaces_to_write[surf] = surfs[ii];
-        surf++;
-    }
-
+    
     /* Do I need to sort the markers? */
     std::sort(smarkers.begin(), smarkers.end(),
     [](std::pair<size_t,int> const& p1, std::pair<size_t,int> const& p2){return p1.second > p2.second;});
@@ -724,18 +824,10 @@ void Write_ASCII_Impacts(SETT const& svar, MESH const& cells, vector<vector<SURF
     for(size_t ii = 0; ii < surfaces_to_write.size(); ++ii)
     {
 
-        for(size_t jj = 0; jj < surfaces_to_write[ii].size(); ++jj )
+        for(size_t jj = 0; jj < surfaces_to_write[ii].faceIDs.size(); ++jj )
         {
-            size_t faceID = surfaces_to_write[ii][jj].faceID;
-            if( faceID < cells.faces.size())
-            {
-                faces[ii].emplace_back(cells.faces[surfaces_to_write[ii][jj].faceID]);
-            }
-            // else
-            // {
-            //     cout << "index is outside the face array size" << endl;
-            // }
-            
+            size_t faceID = surfaces_to_write[ii].faceIDs[jj];
+            faces[ii].emplace_back(cells.faces[faceID]);
         }
     
         /* Get the vertex indexes, delete duplicates, reorder, and recast the face indexes */
@@ -770,7 +862,12 @@ void Write_ASCII_Impacts(SETT const& svar, MESH const& cells, vector<vector<SURF
 
     
     string file = svar.surfacefile;
-    file.append(".dat");
+    file.append("_");
+
+    std::stringstream stream;
+    stream << std::fixed << std::setprecision(2) << fvar.d_0*1e6 ;
+    file.append(stream.str());
+    file.append("um.dat");
     ofstream fout(file);
 
     if(!fout.is_open())
@@ -810,12 +907,13 @@ void Write_ASCII_Impacts(SETT const& svar, MESH const& cells, vector<vector<SURF
                 }
             }
         }
-        fout << endl;
+        fout << endl << endl;
 
         /* Variable data goes here */
-        for(size_t jj = 0; jj < surfaces_to_write[ii].size(); ++jj)
+        fout << "#face impact count" << endl;
+        for(size_t jj = 0; jj < surfaces_to_write[ii].face_count.size(); ++jj)
         {
-            fout << std::setw(w) << surfaces_to_write[ii][jj].count;
+            fout << std::setw(w) << surfaces_to_write[ii].face_count[jj];
             newl++;
 
             if(newl>4)
@@ -825,7 +923,7 @@ void Write_ASCII_Impacts(SETT const& svar, MESH const& cells, vector<vector<SURF
                 newl=0;
             }
         }
-        fout << endl;
+        fout << endl << endl;
 
         // for(size_t jj = 0; jj < surfs[surf].mass.size(); ++jj)
         // {
@@ -840,10 +938,10 @@ void Write_ASCII_Impacts(SETT const& svar, MESH const& cells, vector<vector<SURF
         //     }
         // }
         // fout << endl;
-
-        for(size_t jj = 0; jj < surfaces_to_write[ii].size(); ++jj)
+        fout << "#face beta value" << endl; 
+        for(size_t jj = 0; jj < surfaces_to_write[ii].face_beta.size(); ++jj)
         {
-            fout << std::setw(w) << surfaces_to_write[ii][jj].colEff;
+            fout << std::setw(w) << surfaces_to_write[ii].face_beta[jj];
             newl++;
 
             if(newl>4)
@@ -853,11 +951,12 @@ void Write_ASCII_Impacts(SETT const& svar, MESH const& cells, vector<vector<SURF
                 newl=0;
             }
         }
-        fout << endl;
+        fout << endl << endl;
 
-        for(size_t jj = 0; jj < surfaces_to_write[ii].size(); ++jj)
+        fout << "#face area value" << endl;
+        for(size_t jj = 0; jj < surfaces_to_write[ii].face_area.size(); ++jj)
         {
-            fout << std::setw(w) << surfaces_to_write[ii][jj].area;
+            fout << std::setw(w) << surfaces_to_write[ii].face_area[jj];
             newl++;
 
             if(newl>4)
@@ -867,7 +966,7 @@ void Write_ASCII_Impacts(SETT const& svar, MESH const& cells, vector<vector<SURF
                 newl=0;
             }
         }
-        fout << endl;
+        fout << endl << endl;
 
 
         /*Write the face data*/
@@ -893,108 +992,17 @@ void Write_ASCII_Impacts(SETT const& svar, MESH const& cells, vector<vector<SURF
 }   
 
 /* Write catch efficiency as a plot of efficiency vs arclength chord fraction. */
-void Write_Aerofoil_Catch_Efficiency(SETT const& svar, MESH const& cells, int const& marker, 
-            vector<real> const& beta, vector<real> const& area, vector<vec<real,3>> const& pos )
+void Write_Aerofoil_Catch_Efficiency(SETT const& svar, FLUID const& fvar, MESH const& cells, vector<int> const& marks, 
+            vector<vector<real>> const& beta, vector<vector<real>> const& area, vector<vector<vec<real,3>>> const& pos )
 {
-    string name = svar.bnames[marker];
-
-
-    /* Find the face centers, and their distance along the surface from the leading edge  */
-    vector<real> fArc(pos.size());
-    
-    // real smallest = 10;
-    real dx = 1e-6;
-    for(size_t ii = 0; ii < pos.size(); ++ii)
-    {
-        /* Get the distance */
-        real length = 0.0;
-
-        /* Calculate the camber line */
-        // real xi = pos[ii][0];
-        real yi = pos[ii][2];
-
-        real r = 0.2025;
-        real k1 = 15.957;
-        real a0 = 0.2969;
-        real a1 = -0.126;
-        real a2 = -0.3516;
-        real a3 = 0.2843;
-        real a4 = -0.1036;
-        
-        // real dx = xi/100.0;
-
-        vec<real,2> posm1(0.0);
-        vec<real,2> posp1(0.0);
-        real x = 0.0;
-        while(fabs(posp1[1]) < fabs(yi))
-        {   
-            /* Get the y of the camber line */         
-            real y_camber = 0.0;
-            real dy_camber = 0.0;
-
-            if(x < r)
-            {
-                y_camber = k1/6.0 * (pow(x,3)-3*r*x*x + r*r*(3-r)*x);
-                dy_camber = k1/6.0 * (3*pow(x,2)-6*r*x + r*r*(3-r));
-            }
-            else
-            {
-                y_camber = k1*r*r*r/6 * (1-x);
-                dy_camber = -k1*r*r*r/6;
-            }
-
-            /* Get the thickness */
-            real y_thick = 0.12/0.2 * (a0*pow(x,0.5) + a1*x + a2*x*x + a3*x*x*x + a4*x*x*x*x);
-            
-            real theta = atan(dy_camber);
-
-            if(yi > 0)
-            {
-                posp1 = vec<real,2>(x-y_thick*sin(theta), y_camber + y_thick*cos(theta));
-                length += (posp1-posm1).norm();   
-            }
-            else
-            {
-                posp1 = vec<real,2>(x+y_thick*sin(theta), y_camber - y_thick*cos(theta));   
-                length -= (posp1-posm1).norm();
-            }
-
-            /* Get the distance */
-            
-            posm1 = posp1;
-            x += dx;
-        }
-
-        fArc[ii] = length;
-        // if(fabs(arc) < smallest)
-        //     smallest = arc;
-    }
-
-    vector<vector<real>> data(beta.size(), vector<real>(3,0.0));
-
-    for(size_t ii = 0; ii < beta.size(); ++ii)
-    {
-        data[ii][0] = fArc[ii];
-        data[ii][1] = beta[ii];
-        data[ii][2] = area[ii];
-    } 
-
-    /* Sort by the first index */
-    std::sort(data.begin(),data.end(),[](vector<real> const& p1, vector<real> const& p2){return p1[0] < p2[0];});
-
-
-
-
-    /* Normalise the arcs by the smallest value */
-    // for(size_t jj = 0; jj < surfaces_to_write[ii].size(); ++jj)
-    // {
-    //     fArc[ii][jj] -= smallest;
-    // }
-    
-
     /* Open file */
     string file = svar.surfacefile;
-    file.append("_Arc.dat");
+    file.append("_");
+    std::stringstream stream;
+    stream << std::fixed << std::setprecision(2) << fvar.d_0*1e6 ;
+    file.append(stream.str());
+    file.append("um_Arc.dat");
+
     ofstream fout(file);
 
     if(!fout.is_open())
@@ -1006,19 +1014,124 @@ void Write_Aerofoil_Catch_Efficiency(SETT const& svar, MESH const& cells, int co
     fout << "TITLE=\"Catch efficiency vs arclength chord fraction\"\n";
     fout << "VARIABLES= \"Arclength chord fraction\" \"beta\" \"average area\"\n";
 
-    fout << "ZONE T=\"" << name << "\"\n";
 
-    size_t w = 15;
-    size_t preci = 6;
-    fout << std::left << std::scientific << std::setprecision(preci);
-    fout << std::setw(1);
-    
-    for(size_t jj = 0; jj < data.size(); ++jj)
+    for(size_t jj = 0; jj < marks.size(); ++jj)
     {
-        fout << std::setw(w) << data[jj][0] << std::setw(w) << 
-        data[jj][1] << std::setw(w) << data[jj][2] << endl;
-    }
+        string name = svar.bnames[marks[jj]];
 
+        /* Find the face centers, and their distance along the surface from the leading edge  */
+        vector<real> fArc(pos[jj].size(),0.0);
+        
+        // real smallest = 10;
+        real dx = 1e-5;
+        for(size_t ii = 0; ii < pos[jj].size(); ++ii)
+        {
+            /* Ignore points where the calculation failed for whatever reason */
+            if(beta[jj][ii] == 0)
+                continue;
+
+            /* Get the distance */
+            real length = 0.0;
+
+            /* Calculate the camber line */
+            // real xi = pos[ii][0];
+            real yi = pos[jj][ii][2];
+
+            real r = 0.2025;
+            real k1 = 15.957;
+            real a0 = 0.2969;
+            real a1 = -0.126;
+            real a2 = -0.3516;
+            real a3 = 0.2843;
+            real a4 = -0.1036;
+            
+            // real dx = xi/100.0;
+
+            vec<real,2> posm1(0.0);
+            vec<real,2> posp1(0.0);
+            real x = 0.0;
+            while(fabs(posp1[1]) < fabs(yi))
+            {   
+                /* Get the y of the camber line */         
+                real y_camber = 0.0;
+                real dy_camber = 0.0;
+
+                if(x < r)
+                {
+                    y_camber = k1/6.0 * (pow(x,3)-3*r*x*x + r*r*(3-r)*x);
+                    dy_camber = k1/6.0 * (3*pow(x,2)-6*r*x + r*r*(3-r));
+                }
+                else
+                {
+                    y_camber = k1*r*r*r/6 * (1-x);
+                    dy_camber = -k1*r*r*r/6;
+                }
+
+                /* Get the thickness */
+                real y_thick = 0.12/0.2 * (a0*pow(x,0.5) + a1*x + a2*x*x + a3*x*x*x + a4*x*x*x*x);
+                
+                real theta = atan(dy_camber);
+
+                if(yi > 0)
+                {
+                    posp1 = vec<real,2>(x-y_thick*sin(theta), y_camber + y_thick*cos(theta));
+                    length += (posp1-posm1).norm();   
+                }
+                else
+                {
+                    posp1 = vec<real,2>(x+y_thick*sin(theta), y_camber - y_thick*cos(theta));   
+                    length -= (posp1-posm1).norm();
+                }
+
+                /* Get the distance */
+                
+                posm1 = posp1;
+                x += dx;
+            }
+
+            fArc[ii] = (length);
+            // if(fabs(arc) < smallest)
+            //     smallest = arc;
+        }
+
+        vector<vector<real>> data;
+
+        for(size_t ii = 0; ii < beta[jj].size(); ++ii)
+        {
+            if(beta[jj][ii] == 0)
+                continue;
+
+            vector<real> temp = {fArc[ii],beta[jj][ii],area[jj][ii]};
+            data.emplace_back(temp);
+        } 
+
+        /* Sort by the first index */
+        if(!data.empty())
+        {
+            std::sort(data.begin(),data.end(),[](vector<real> const& p1, vector<real> const& p2){return p1[0] < p2[0];});
+
+            /* Add a 0 value at the front and end. */
+            vector<real> temp(3,0.0);
+            temp[0] = data[0][0];
+
+            data.insert(data.begin(),temp);
+            temp[0] = data.back()[0];
+            data.emplace_back(temp);
+
+            fout << "ZONE T=\"" << name << "\"\n";
+
+            size_t w = 15;
+            size_t preci = 6;
+            fout << std::left << std::scientific << std::setprecision(preci);
+            fout << std::setw(1);
+            
+            for(size_t kk = 0; kk < data.size(); ++kk)
+            {
+                fout << std::setw(w) << data[kk][0] << std::setw(w) << 
+                data[kk][1] << std::setw(w) << data[kk][2] << endl;
+            }
+        }
+    }
     
     fout.close();
 

@@ -750,6 +750,7 @@ void Place_Faces(int &fin, size_t const &nFace, MESH &cells)
 	vector<size_t> surf_IDs;
 	#pragma omp parallel shared(leftright)
 	{
+		real maxedge = 0.0;
 		vector<size_t> local;
 		#pragma omp for schedule(static) nowait
 		for (size_t ii = 0; ii < nFace; ++ii)
@@ -767,13 +768,41 @@ void Place_Faces(int &fin, size_t const &nFace, MESH &cells)
 					local.emplace_back(ii);
 				}
 			}
+
+			/* Find the longest edge */
+			real max_e = 0.0;
+			if(cells.faces[ii].size() == 3)
+			{
+				vector<size_t> const& face = cells.faces[ii];
+				max_e = std::max((cells.verts[face[0]] - cells.verts[face[1]]).norm(),
+						std::max((cells.verts[face[0]] - cells.verts[face[2]]).norm(),
+								 (cells.verts[face[1]] - cells.verts[face[2]]).norm()));
+			}
+			else
+			{
+				vector<size_t> const& face = cells.faces[ii];
+				max_e = std::max((cells.verts[face[0]] - cells.verts[face[1]]).norm(),
+						std::max((cells.verts[face[0]] - cells.verts[face[2]]).norm(),
+						std::max((cells.verts[face[0]] - cells.verts[face[3]]).norm(),
+						std::max((cells.verts[face[1]] - cells.verts[face[3]]).norm(),
+						std::max((cells.verts[face[2]] - cells.verts[face[3]]).norm(),
+								 (cells.verts[face[1]] - cells.verts[face[2]]).norm())))));
+			}
+
+			if(max_e > maxedge)
+				maxedge = max_e;
+			
 		}
 
 		#pragma omp for schedule(static) ordered
 		for(int ii = 0; ii < omp_get_num_threads(); ++ii)
 		{
 			#pragma omp ordered
-			surf_IDs.insert(surf_IDs.end(),local.begin(),local.end());
+			{
+				surf_IDs.insert(surf_IDs.end(),local.begin(),local.end());
+				if(maxedge > cells.maxlength)
+					cells.maxlength = maxedge;
+			}
 		}
 
 		#pragma omp single

@@ -953,11 +953,11 @@ class matrix<T,3>
         inline vec<T,3> operator*(vec<T,3> const& a) const
         {
             return  vec<T,3>(data[0]*a[0] + data[1]*a[1] + data[2]*a[2],
-                             data[3]*a[0] + data[5]*a[1] + data[5]*a[2],
+                             data[3]*a[0] + data[4]*a[1] + data[5]*a[2],
                              data[6]*a[0] + data[7]*a[1] + data[8]*a[2]);
         }
 
-        inline matrix<T,3> operator*(matrix<T,3> const& a) const
+        matrix<T,3> operator*(matrix<T,3> const& a) const
         {
             matrix<T,3> b;
 
@@ -985,85 +985,49 @@ class matrix<T,3>
 
         inline matrix<T,3>& operator += (T const& a)
         {
-            data[0] += a;
-            data[1] += a;
-            data[2] += a;
-            data[3] += a;
-            data[4] += a;
-            data[5] += a;
-            data[6] += a;
-            data[7] += a;
-            data[8] += a;
+            data[0] += a; data[1] += a; data[2] += a;
+            data[3] += a; data[4] += a; data[5] += a;
+            data[6] += a; data[7] += a; data[8] += a;
             return *this;
         }
 
         inline matrix<T,3>& operator += (matrix<T,3> const& a)
         {
-            data[0] += a[0];
-            data[1] += a[1];
-            data[2] += a[2];
-            data[3] += a[3];
-            data[4] += a[4];
-            data[5] += a[5];
-            data[6] += a[6];
-            data[7] += a[7];
-            data[8] += a[8];
+            data[0] += a[0]; data[1] += a[1]; data[2] += a[2];
+            data[3] += a[3]; data[4] += a[4]; data[5] += a[5];
+            data[6] += a[6]; data[7] += a[7]; data[8] += a[8];
             return *this;
         }
 
         inline matrix<T,3>& operator -= (T const& a)
         {
-            data[0] -= a;
-            data[1] -= a;
-            data[2] -= a;
-            data[3] -= a;
-            data[4] -= a;
-            data[5] -= a;
-            data[6] -= a;
-            data[7] -= a;
-            data[8] -= a;
+            data[0] -= a; data[1] -= a; data[2] -= a;
+            data[3] -= a; data[4] -= a; data[5] -= a;
+            data[6] -= a; data[7] -= a; data[8] -= a;
             return *this;
         }
 
         inline matrix<T,3>& operator -= (matrix<T,3> const& a)
         {
-            data[0] -= a[0];
-            data[1] -= a[1];
-            data[2] -= a[2];
-            data[3] -= a[3];
-            data[4] -= a[4];
-            data[5] -= a[5];
-            data[6] -= a[6];
-            data[7] -= a[7];
-            data[8] -= a[8];
+            data[0] -= a[0]; data[1] -= a[1]; data[2] -= a[2];
+            data[3] -= a[3]; data[4] -= a[4]; data[5] -= a[5];
+            data[6] -= a[6]; data[7] -= a[7]; data[8] -= a[8];
             return *this;
         }
 
         inline matrix<T,3>& operator *= (T const& a)
         {
-            data[0] *= a;
-            data[1] *= a;
-            data[2] *= a;
-            data[3] *= a;
-            data[4] *= a;
-            data[5] *= a;
-            data[6] *= a;
-            data[7] *= a;
-            data[8] *= a;
+            data[0] *= a; data[1] *= a; data[2] *= a;
+            data[3] *= a; data[4] *= a; data[5] *= a;
+            data[6] *= a; data[7] *= a; data[8] *= a;
             return *this;
         }
 
         inline matrix<T,3>& operator /= (T const& a)
         {
-            data[0] /= a;
-            data[1] /= a;
-            data[2] /= a;
-            data[3] /= a;
-            data[4] /= a;
-            data[5] /= a;
-            data[6] /= a;
-            data[7] /= a;
-            data[8] /= a;
+            data[0] /= a; data[1] /= a; data[2] /= a;
+            data[3] /= a; data[4] /= a; data[5] /= a;
+            data[6] /= a; data[7] /= a; data[8] /= a;
             return *this;
         }
 
